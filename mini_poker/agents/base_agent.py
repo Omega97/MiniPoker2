@@ -77,6 +77,19 @@ class BaseAgent:
         value = self.get_logit(infoset, action) + update_step
         self.set_logit(infoset, action, value)
 
+    def center_logits(self, infoset: Infoset) -> None:
+        """Force sum of logits to 0."""
+        logits_dict = self.logits[infoset]
+        actions = list(logits_dict.keys())
+
+        # Compute mean of current logits
+        mean_logit = sum(logits_dict.values()) / len(actions)
+
+        # Subtract mean from each logit (and re-apply clipping)
+        for action in actions:
+            centered = logits_dict[action] - mean_logit
+            self.set_logit(infoset, action, centered)  # set_logit already clips
+
     def get_logits(self, infoset: Infoset) -> Dict[str, float]:
         return self.logits[infoset]
 
@@ -145,7 +158,7 @@ class BaseAgent:
         value_p2 = total_p2 / rollout_samples
         return value_p1, value_p2
 
-    def sample_trajectories(self, card1, card2) -> dict:
+    def sample_trajectory(self, card1, card2) -> dict:
         """Perform random trajectory and returns dict of info."""
         visited = {}
         history = ""
@@ -214,7 +227,7 @@ class BaseAgent:
         # Using your existing conversion logic
         self.logits = {to_infoset(k): v for k, v in data["logits"].items()}
         self.policy = {to_infoset(k): v for k, v in data["policy"].items()}
-        print(f"Agent {self} loaded from {path}")
+        print(f"\nAgent {self} loaded from {path}")
 
     def entropy(self) -> float:
         """
@@ -237,6 +250,46 @@ class BaseAgent:
             total_entropy += infoset_entropy
 
         return total_entropy / num_infosets
+
+    def best_card_fold_index(self) -> float:
+        """
+        Returns a metric where:
+        - 1.0: Agent is folding the best card at the same rate as a random agent.
+        - 0.0: Agent never folds the best card.
+        - > 1.0: Agent is actively 'punishing' the best card (worse than random).
+        """
+        if not self.policy:
+            return 0.0
+
+        best_card = self.deck_size - 1
+        total_weighted_score = 0.0
+        nodes_counted = 0
+        fold_action_keys = {'F', 'f'}
+
+        for infoset, probs in self.policy.items():
+            if infoset.card == best_card:
+                # Check if 'fold' is even an option at this node
+                available_actions = list(probs.keys())
+                num_actions = len(available_actions)
+
+                # Find the fold action
+                fold_prob = 0.0
+                has_fold = False
+                for action in available_actions:
+                    if action in fold_action_keys:
+                        fold_prob = probs[action]
+                        has_fold = True
+                        break
+
+                if has_fold:
+                    # Weight by number of actions so (1/N) * N = 1.0
+                    total_weighted_score += (fold_prob * num_actions)
+                    nodes_counted += 1
+
+        if nodes_counted == 0:
+            return -1.0
+
+        return total_weighted_score / nodes_counted
 
     def train(self):
         """Blanket training method"""

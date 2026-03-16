@@ -1,5 +1,6 @@
 import random
 from time import time
+from typing import Dict
 from mini_poker.agents.base_agent import BaseAgent, Infoset
 from mini_poker.game import MiniPoker
 
@@ -16,14 +17,15 @@ class CounterfactualAgent(BaseAgent):
                  logit_bound=10.,
                  epochs=10_000,
                  lr=0.001,
-                 rollout_samples=3,
-                 explore_proba=0.,
+                 rollout_samples=1,
+                 explore_proba=0.01,
                  ):
         self.epochs = epochs
         self.lr = lr
         self.rollout_samples = rollout_samples
         self.explore_proba = explore_proba
         self.t0 = None
+        self.epoch_start = None
         super().__init__(game, logit_bound)
 
     def _init_name(self):
@@ -34,7 +36,7 @@ class CounterfactualAgent(BaseAgent):
         self.name += f"_r{self.rollout_samples}"
         self.name += f"_p{self.explore_proba * 100:.0f}"
 
-    def sample_trajectories(self, card1, card2, explore=False) -> dict:
+    def sample_trajectory(self, card1, card2) -> dict:
         """Perform random trajectory and returns dict of info."""
         visited = {}
         history = ""
@@ -44,14 +46,25 @@ class CounterfactualAgent(BaseAgent):
             card = card1 if player == 0 else card2
             infoset = Infoset(card, history)
             visited[infoset] = reach_prob
-            if explore:
-                actions = self.game.tree[history]
-                action = random.choice(actions)
-                reach_prob *= (1.0 / len(actions))
-            else:
-                probs = self.policy[infoset]
-                action = random.choices(list(probs.keys()), weights=list(probs.values()))[0]
-                reach_prob *= probs[action]
+            probs = self.policy[infoset]
+            action = random.choices(list(probs.keys()), weights=list(probs.values()))[0]
+            reach_prob *= probs[action]
+            history += action
+        return visited
+
+    def sample_random_trajectory(self, card1, card2) -> Dict[Infoset, float]:
+        """Perform random trajectory and return dict of info."""
+        visited = {}
+        history = ""
+        reach_prob = 1.0
+        while history not in self.game.terminals:
+            player = len(history) % 2
+            card = card1 if player == 0 else card2
+            infoset = Infoset(card, history)
+            visited[infoset] = reach_prob
+            actions = self.game.tree[history]
+            action = random.choice(actions)
+            reach_prob *= (1.0 / len(actions))
             history += action
         return visited
 
@@ -80,10 +93,55 @@ class CounterfactualAgent(BaseAgent):
                     time_left = remaining_epochs / speed
 
         p = epoch / tot_epochs
-        out = f"\r{epoch:6})  {p:.2%}  S = {self.entropy():.4f}"
+        out = f"\r{epoch:6})  {p:.2%}  S = {self.entropy():.4f}   F = {self.best_card_fold_index():.4f}"
         if time_left is not None:
             out += f"   time left: {time_left / 60:.0f} min"
         print(out, end='')
+
+    def _explore_trajectory(self, card1, card2):
+        """ Sample a single trajectory through the game tree. """
+        explore = (random.random() < self.explore_proba)
+        if explore:
+            visited_infosets = self.sample_random_trajectory(card1, card2)
+        else:
+            visited_infosets = self.sample_trajectory(card1, card2)
+        return visited_infosets
+
+    def get_baseline(self, actions, action_values, infoset) -> float:
+        # Calculate the baseline (expected value) for the current policy
+        probs = self.get_policy(infoset)
+        baseline = sum(probs[a] * action_values[a] for a in actions)
+        return baseline
+
+    def _update_rule(self, actions, action_values, infoset):
+        """ Direct Update: Update logits based on advantage. """
+        baseline = self.get_baseline(actions, action_values, infoset)
+
+        for action in actions:
+            # Advantage (NOT weighted by reach probability)
+            advantage = action_values[action] - baseline
+            update_step = self.lr * advantage
+            self.update_logit(infoset, action, update_step)
+
+        # Recalculate probabilities for this infoset
+        self.softmax_update(infoset)
+
+    def get_action_values(self, actions, history, card1, card2) -> dict:
+        """ Calculate action values using rollouts. """
+        player = len(history) % 2
+        action_values = {}
+        for action in actions:
+            rewards = self.evaluate_action(history, action, card1, card2, self.rollout_samples)
+            action_values[action] = rewards[player]
+        return action_values
+
+    def update_visited_infosets(self, visited_infosets, card1, card2):
+        """ Update each visited information set. """
+        for (card, history), reach_prob in visited_infosets.items():
+            infoset = Infoset(card, history)
+            actions = self.game.tree[history]
+            action_values = self.get_action_values(actions, history, card1, card2)
+            self._update_rule(actions, action_values, infoset)
 
     def train(self, print_period=1000):
         """
@@ -92,38 +150,8 @@ class CounterfactualAgent(BaseAgent):
         2. Calculate advantage for visited nodes.
         3. Update logits.
         """
-        for epoch, (card1, card2) in enumerate(self.game.iter_uniformly(self.epochs)):
-
-            if epoch % print_period == 0:
-                self.print_progress(epoch)
-
-            # 1. Sample a single trajectory through the game tree
-            explore = (random.random() < self.explore_proba)
-            visited_infosets = self.sample_trajectories(card1, card2, explore=explore)
-
-            # 2. Update each visited information set
-            for (card, history), reach_prob in visited_infosets.items():
-
-                infoset = Infoset(card, history)
-                player = len(history) % 2
-                actions = self.game.tree[history]
-
-                # Calculate action values using rollouts
-                action_values = {}
-                for action in actions:
-                    rewards = self.evaluate_action(history, action, card1, card2, self.rollout_samples)
-                    action_values[action] = rewards[player]
-
-                # Calculate the baseline (expected value) for the current policy
-                probs = self.get_policy(infoset)
-                baseline = sum(probs[a] * action_values[a] for a in actions)
-
-                # 3. Direct Update: Update logits based on advantage
-                for action in actions:
-                    # Advantage (NOT weighted by reach probability)
-                    advantage = action_values[action] - baseline
-                    update_step = self.lr * advantage
-                    self.update_logit(infoset, action, update_step)
-
-                # Recalculate probabilities for this infoset
-                self.softmax_update(infoset)
+        for iteration, (card1, card2) in enumerate(self.game.iter_uniformly(self.epochs)):
+            if iteration % print_period == 0:
+                self.print_progress(iteration)
+            visited_infosets = self._explore_trajectory(card1, card2)
+            self.update_visited_infosets(visited_infosets, card1, card2)

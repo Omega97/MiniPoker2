@@ -17,14 +17,14 @@ class KernelSmoothedAgent(CounterfactualAgent):
         super()._init_name()
         self.name += f"_s{self.max_sigma * 100:.0f}"
 
-    def _precompute_kernels(self):
+    def _precompute_kernels(self, epsilon=1e-6):
         """Builds a lookup table for kernels for every possible card."""
         matrix = []
         for card in range(self.deck_size):
             # Use your existing logic once for each card
             variance = self._get_variance(card)
 
-            if variance <= 1e-6:
+            if variance <= epsilon:
                 weights = np.zeros(self.deck_size)
                 weights[card] = 1.0
             else:
@@ -53,13 +53,16 @@ class KernelSmoothedAgent(CounterfactualAgent):
         Training loop that spreads the advantage update across
         similar cards using the kernel.
         """
-        for epoch, (card1, card2) in enumerate(self.game.iter_uniformly(self.epochs)):
+        for iteration, (card1, card2) in enumerate(self.game.iter_uniformly(self.epochs)):
 
-            if epoch % print_period == 0:
-                self.print_progress(epoch)
+            if iteration % print_period == 0:
+                self.print_progress(iteration)
 
             explore = (random.random() < self.explore_proba)
-            visited_infosets = self.sample_trajectories(card1, card2, explore=explore)
+            if explore:
+                visited_infosets = self.sample_random_trajectory(card1, card2)
+            else:
+                visited_infosets = self.sample_trajectory(card1, card2)
 
             for (target_card, history), reach_prob in visited_infosets.items():
                 player = len(history) % 2

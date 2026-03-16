@@ -1,9 +1,10 @@
 import random
 from mini_poker.agents.base_agent import Infoset
 from mini_poker.utils import print_colored_status
+from mini_poker.game import MiniPoker
 
 
-def _evaluate_agents_fixed_position(game, agent_p1, agent_p2, n_games=1000):
+def _evaluate_agents_fixed_position(game: MiniPoker, agent_p1, agent_p2, n_games=1000):
     """
     Plays two agents against each other for n_games.
     Returns the average reward per game for (Player 1, Player 2).
@@ -12,15 +13,14 @@ def _evaluate_agents_fixed_position(game, agent_p1, agent_p2, n_games=1000):
     total_reward_p2 = 0
 
     # Iterate through games
-    for _ in range(n_games):
-        # 1. Deal random cards (permutations ensures no duplicate cards)
-        # Using game's deck size [cite: 63]
-        cards = random.sample(range(game.deck_size), 2)
-        p1_card, p2_card = cards[0], cards[1]
+    n_combinations = game.deck_size * (game.deck_size - 1)
+    epochs = max(1, round(n_games / n_combinations))
 
+    for p1_card, p2_card in game.iter_uniformly(epochs):
+        # 1. Deal random cards (permutations ensures no duplicate cards)
         history = ""
 
-        # 2. Play the game until a terminal state is reached [cite: 13]
+        # 2. Play the game until a terminal state is reached
         while history not in game.terminals:
             # Determine whose turn it is [cite: 10]
             acting_player_idx = len(history) % 2
@@ -29,7 +29,7 @@ def _evaluate_agents_fixed_position(game, agent_p1, agent_p2, n_games=1000):
             current_agent = agent_p1 if acting_player_idx == 0 else agent_p2
             current_card = p1_card if acting_player_idx == 0 else p2_card
 
-            # Get action based on the agent's learned policy [cite: 8]
+            # Get action based on the agent's learned policy
             infoset = Infoset(current_card, history)
             action = current_agent.get_action(infoset)
             history += action
@@ -42,7 +42,7 @@ def _evaluate_agents_fixed_position(game, agent_p1, agent_p2, n_games=1000):
     return total_reward_p1 / n_games, total_reward_p2 / n_games
 
 
-def evaluate_agents(game, agent_a, agent_b, n_games=10000):
+def evaluate_agents(game: MiniPoker, agent_a, agent_b, n_games=10000):
     """
     Evaluates two agents by swapping positions halfway through to eliminate
     positional bias. Returns the net average for Agent A and Agent B.
@@ -63,11 +63,12 @@ def evaluate_agents(game, agent_a, agent_b, n_games=10000):
     return avg_a, avg_b
 
 
-def all_v_all_tournament(game, agents: list, n_games=100_000):
+def all_v_all_tournament(game: MiniPoker, agents: list, n_games=100_000, random_seed=0):
+    random.seed(random_seed)
     print(f"\nResults after {n_games} games")
     for i in range(len(agents)):
         agent_1 = agents[i]
-        print(f"{str(agent_1):>50}", end=" ")
+        print(f"{str(agent_1):>60}", end=" ")
         for j in range(i):
             agent_2 = agents[j]
             avg_p1, avg_p2 = evaluate_agents(game, agent_1, agent_2, n_games=n_games)

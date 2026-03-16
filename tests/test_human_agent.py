@@ -1,25 +1,24 @@
 from mini_poker.game import MiniPoker
 from mini_poker.agents.counterfactual_agent import CounterfactualAgent
 from mini_poker.agents.human_agent import HumanAgent, play_vs_agent
+from mini_poker.training.trainer import AgentTrainer
+from mini_poker.agents.new_agent import NewAgent
+
+
+def load_agent():
+    game = MiniPoker(4, 52)
+    agent = NewAgent(game, epochs=300, lr=0.01, rollout_samples=5, explore_proba=0.1, max_sigma=0.)
+    trainer = AgentTrainer(agent)
+    trainer.run()
+    return agent
 
 
 def main():
     # Initialize game with settings from your tests [cite: 83]
     game = MiniPoker(game_power=4, deck_size=52)
 
-    # Load your trained model
-    ai_agent = CounterfactualAgent(game,
-                                   logit_bound=10.,
-                                   epochs=20_000,
-                                   lr=0.001,
-                                   rollout_samples=2,
-                                   explore_proba=0.,)
-    try:
-        ai_agent.load()  # Uses default path logic [cite: 24]
-        print(ai_agent.show_policy())
-    except FileNotFoundError:
-        print("Trained agent not found, using an untrained one.")
-
+    # Players
+    ai_agent = load_agent()
     human = HumanAgent(game)
 
     # Play a match!
