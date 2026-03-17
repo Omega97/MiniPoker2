@@ -14,10 +14,10 @@ class HumanAgent(BaseAgent):
     def get_action(self, infoset: Infoset):
         """Overrides the sampling logic with manual input."""
         card, history = infoset.get_values()
-        legal_actions = self.game.tree[history]  # [cite: 50]
+        legal_actions = self.game.tree[history]
 
         print(f"\n--- YOUR TURN ---")
-        print(f"Hand: [ {card} ] | History: '{history or '(root)'}'")
+        print(f"✋ Hand: [ {card} ] | History: '{history or '(root)'}'")
         print(f"Legal Actions: {', '.join(legal_actions)}")
 
         action = ""
@@ -35,22 +35,20 @@ def play_vs_agent(game, agent_p1, agent_p2):
     Can be used to play against a trained CounterfactualAgent.
     """
     # 1. Setup Game State
-    cards = random.sample(range(game.deck_size), 2)  # [cite: 66]
+    cards = random.sample(range(game.deck_size), 2)
     p1_card, p2_card = cards[0], cards[1]
     history = ""
 
-    print('\n')
-    print("=" * 30)
+    print("\n" + "=" * 30)
     print(f"GAME START: {agent_p1} vs {agent_p2}")
-    print("=" * 30)
 
-    # 2. Main Game Loop [cite: 67]
+    # 2. Main Game Loop
     while history not in game.terminals:
         acting_player_idx = len(history) % 2
         current_agent = agent_p1 if acting_player_idx == 0 else agent_p2
         current_card = p1_card if acting_player_idx == 0 else p2_card
 
-        # Identify state [cite: 16]
+        # Identify state
         infoset = Infoset(current_card, history)
 
         # Logic for non-human agents to show "thinking"
@@ -60,13 +58,14 @@ def play_vs_agent(game, agent_p1, agent_p2):
         action = current_agent.get_action(infoset)
         history += action
         print(f"Player {acting_player_idx + 1} chose: {action}")
+        if not isinstance(current_agent, HumanAgent):
+            input()
 
-    # 3. Final Results [cite: 60, 61]
+    # 3. Final Results
     r1, r2 = game.get_reward(history, p1_card, p2_card)
 
-    print("\n" + "=" * 30)
-    print(f"TERMINAL STATE: '{history}'")
-    print(f"P1 Card: {p1_card} | P2 Card: {p2_card}")
+    print(f"\nTERMINAL STATE: '{history}'")
+    print(f"👀 P1 Card: [{p1_card:2}] | P2 Card: [{p2_card:2}]")
     print(f"REWARDS -> P1: {r1:+.1f}, P2: {r2:+.1f}")
     print("=" * 30)
 

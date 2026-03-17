@@ -9,7 +9,7 @@ class AgentTrainer:
     loading, training, saving, and policy display.
     """
     def __init__(self, agent, random_seed: int = 0, show_policy: bool = False,
-                 data_dir: Path = None, force_training=False):
+                 data_dir: Path = None, inherit_from = None, force_training=False):
         """
         Initialize the trainer.
 
@@ -18,6 +18,7 @@ class AgentTrainer:
             random_seed: Seed for reproducibility.
             show_policy: Whether to print the policy after training/loading.
             data_dir: Directory for saving/loading models. Defaults to global DATA_DIR.
+            inherit_from: agent from whom to copy logits and policy.
             force_training: force training (no loading)
         """
         self.agent = agent
@@ -25,6 +26,7 @@ class AgentTrainer:
         self.show_policy = show_policy
         self.data_dir = data_dir or DATA_DIR  # Fallback to global if not provided
         self.filepath = self.data_dir / f"{agent}.json"
+        self.inherit_from = inherit_from
         self.force_training = force_training
 
     def run(self):
@@ -34,8 +36,6 @@ class AgentTrainer:
         Returns:
             The agent object.
         """
-        random.seed(self.random_seed)
-
         # Loading
         if not self.force_training:
             if self._try_load():
@@ -44,7 +44,8 @@ class AgentTrainer:
                     self._display_policy()
                 return self.agent
 
-        # Training & Save
+        # (Try inheriting parameters) Training & Save
+        self._apply_inherit()
         self._train()
         self._save()
 
@@ -63,9 +64,14 @@ class AgentTrainer:
         except FileNotFoundError:
             return False
 
+    def _apply_inherit(self):
+        if self.inherit_from is not None:
+            self.agent.inherit_from(self.inherit_from)
+
     def _train(self):
         """Trigger the agent's training process."""
         print(f"\nTraining {self.agent}")
+        random.seed(self.random_seed)
         self.agent.train()
 
     def _save(self):

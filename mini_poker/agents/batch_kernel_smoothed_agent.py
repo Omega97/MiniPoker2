@@ -21,6 +21,7 @@ class BatchKernelSmoothedAgent(KernelSmoothedAgent):
         1. Accumulate updates for all card combinations.
         2. Apply updates and center logits once per epoch.
         """
+        print(f"\nTraining {self} ...")
         for iteration, (card1, card2) in enumerate(self.game.iter_uniformly(self.epochs)):
             if iteration % print_period == 0:
                 self.print_progress(iteration)

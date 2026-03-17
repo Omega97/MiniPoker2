@@ -22,7 +22,7 @@ def _evaluate_agents_fixed_position(game: MiniPoker, agent_p1, agent_p2, n_games
 
         # 2. Play the game until a terminal state is reached
         while history not in game.terminals:
-            # Determine whose turn it is [cite: 10]
+            # Determine whose turn it is
             acting_player_idx = len(history) % 2
 
             # Select the correct agent and card for the current turn

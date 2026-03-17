@@ -1,40 +1,94 @@
+import matplotlib.pyplot as plt
+import numpy as np
+import json
 from mini_poker.game import MiniPoker
-from mini_poker.agents.counterfactual_agent import CounterfactualAgent
-from mini_poker.agents.human_agent import HumanAgent, play_vs_agent
+from mini_poker.paths import DATA_DIR
 from mini_poker.training.trainer import AgentTrainer
 from mini_poker.agents.new_agent import NewAgent
+from mini_poker.agents.human_agent import HumanAgent, play_vs_agent
 
 
 def load_agent():
     game = MiniPoker(4, 52)
-    agent = NewAgent(game, epochs=300, lr=0.01, rollout_samples=5, explore_proba=0.1, max_sigma=0.)
+    agent = NewAgent(game, epochs=1000, lr=0.001, rollout_samples=20, explore_proba=0.01, max_sigma=2.)
     trainer = AgentTrainer(agent)
     trainer.run()
     return agent
 
 
-def main():
-    # Initialize game with settings from your tests [cite: 83]
+def test_human_v_ai():
+    # Initialize game settings
     game = MiniPoker(game_power=4, deck_size=52)
+    save_path = DATA_DIR / "match_history.json"
 
     # Players
-    ai_agent = load_agent()
+    ai_agent = load_agent()  # Ensure this function is defined in your scope
     human = HumanAgent(game)
 
-    # Play a match!
-    points = 0
-    hands = 0
-    while True:
-        r_human, r_ai = play_vs_agent(game, human, ai_agent)
-        points += r_human
+    # 1. Load existing data if possible
+    rewards_history = []
+    if save_path.exists():
+        with open(save_path, 'r') as f:
+            rewards_history = json.load(f)
+        print(f"Loaded {len(rewards_history)} previous hands from {save_path}")
 
-        # Swap human and ai_agent to change who goes first.
-        r_ai, r_human = play_vs_agent(game, ai_agent, human)
-        points += r_human
+    points = sum(rewards_history)
+    hands = len(rewards_history)
 
-        hands += 2
-        print(f"Avg points: {points/hands:+.3f}")
+    try:
+        while True:
+            # First Hand: Human goes first
+            r_human, r_ai = play_vs_agent(game, human, ai_agent)
+            rewards_history.append(r_human)
+            points += r_human
+            hands += 1
+
+            emoji = "🔵" if r_human >= 0 else "🔴"
+            std = np.std(rewards_history) / len(rewards_history) ** 0.5
+            print(f"{emoji} Your reward = {r_human:+.0f} | Avg: {points / hands:+.3f} (±{std:.3f})")
+            user_input = input("\nPress Enter to continue (or 'q' to quit): ").strip().lower()
+            if user_input in ['q', 'quit']:
+                break
+
+            # Second Hand: AI goes first
+            r_ai, r_human = play_vs_agent(game, ai_agent, human)
+            rewards_history.append(r_human)
+            points += r_human
+            hands += 1
+
+            emoji = "🔵" if r_human >= 0 else "🔴"
+            std = np.std(rewards_history) / len(rewards_history) ** 0.5
+            print(f"{emoji} Your reward = {r_human:+.0f} | Avg: {points / hands:+.3f} (±{std:.3f})")
+            user_input = input("\nPress Enter to continue (or 'q' to quit): ").strip().lower()
+            if user_input in ['q', 'quit']:
+                break
+
+    except KeyboardInterrupt:
+        print("\nSession interrupted.")
+
+    # 2. Save all rewards to the file
+    with open(save_path, 'w') as f:
+        json.dump(rewards_history, f)
+    print(f"Data saved to {save_path}")
+
+    # 3. Display cumulative reward with Matplotlib
+    if rewards_history:
+        cumulative_rewards = [0]
+        current_total = 0
+        for r in rewards_history:
+            current_total += r
+            cumulative_rewards.append(current_total)
+
+        plt.figure(figsize=(10, 5))
+        plt.plot(cumulative_rewards, label="Cumulative Reward")
+        plt.axhline(0, color='red', linestyle='--', alpha=0.5)
+        plt.title(f"Human Performance vs {ai_agent}")
+        plt.xlabel("Hands Played")
+        plt.ylabel("Total Reward")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
 
 
 if __name__ == "__main__":
-    main()
+    test_human_v_ai()

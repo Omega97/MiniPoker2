@@ -174,20 +174,35 @@ class BaseAgent:
             history += action
         return visited
 
-    def show_policy(self):
-        """Print learned policies."""
-        out = f"\nCOMPLETE LEARNED POLICY for N={self.game.game_power} (Stack={self.game.stack})\n\n"
-        out += f"{'Card':<5} | {'History':<8} | {'Action Probabilities'}\n"
-        out += "-" * 60 + '\n'
+    def show_policy(self, logit_mode=False):
+        """
+        Print learned policies or raw logits.
+        :param logit_mode: If True, displays raw logit values instead of percentages.
+        """
+        mode_title = "LOGITS" if logit_mode else "ACTION PROBABILITIES"
+        out = f"\nCOMPLETE LEARNED {mode_title} for N={self.game.game_power} (Stack={self.game.stack})\n\n"
+        out += f"{'Card':<5} | {'History':<8} | {mode_title}\n"
+        out += "-" * 70 + '\n'
+
+        # Sort histories by length then alphabetical order
         histories = sorted(self.game.tree.keys(), key=lambda x: (len(x), x))
+
         for history in histories:
             for card in range(self.game.deck_size):
                 infoset = Infoset(card, history)
-                probs = self.get_policy(infoset)
-                prob_str = "   ".join(f"{action} {prob:<4.0%}" for action, prob in probs.items())
-                prob_str = prob_str.replace(f" {0:.0%}", " - ")
+
+                if logit_mode:
+                    # Retrieve raw logit values
+                    data = self.get_logits(infoset)
+                    data_str = "   ".join(f"{action} {val:>6.2f}" for action, val in data.items())
+                else:
+                    # Retrieve softmax policy probabilities
+                    probs = self.get_policy(infoset)
+                    data_str = "   ".join(f"{action} {prob:<4.0%}" for action, prob in probs.items())
+                    data_str = data_str.replace(f" {0:.0%}", " - ")
+
                 display_h = history if history else "(root)"
-                out += f" {card:<4} | {display_h:<8} |   {prob_str}\n"
+                out += f" {card:<4} | {display_h:<8} |   {data_str}\n"
             out += '\n'
         return out
 
@@ -290,6 +305,32 @@ class BaseAgent:
             return -1.0
 
         return total_weighted_score / nodes_counted
+
+    def inherit_from(self, other_agent):
+        self.logits = other_agent.logits.copy()
+        self.policy = other_agent.policy.copy()
+
+    def sanity_check(self, rel_tol=1e-5):
+        """
+        Counts decision-points (infosets) where all possible actions
+        have hit the logit boundary (+/- logit_bound).
+        """
+        saturated_count = 0
+        total_infosets = len(self.logits)
+
+        for infoset, action_logits in self.logits.items():
+            # Check if every logit in this infoset is at the boundary
+            # We use math.isclose to handle potential floating point precision issues
+            is_saturated = all(
+                math.isclose(abs(logit), self.logit_bound, rel_tol=rel_tol)
+                for logit in action_logits.values()
+            )
+
+            if is_saturated:
+                saturated_count += 1
+
+        print(f"Sanity Check: {saturated_count}/{total_infosets} infosets are fully saturated.")
+        return saturated_count
 
     def train(self):
         """Blanket training method"""

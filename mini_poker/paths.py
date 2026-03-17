@@ -8,9 +8,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 # Define subdirectories
-DATA_DIR = PROJECT_ROOT / "mini_poker" / "instances"
-LOGS_DIR = PROJECT_ROOT / "logs"
+DATA_DIR = PROJECT_ROOT / "instances"
+GAME_DATA_DIR = PROJECT_ROOT / "game_data"
 
 
 # Ensure directories exist so the agent doesn't crash on save
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+for folder in (DATA_DIR, GAME_DATA_DIR):
+    folder.mkdir(parents=True, exist_ok=True)
