@@ -2,15 +2,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import json
 from mini_poker.game import MiniPoker
-from mini_poker.paths import DATA_DIR
+from mini_poker.paths import GAME_DATA_DIR
 from mini_poker.training.trainer import AgentTrainer
-from mini_poker.agents.new_agent import NewAgent
 from mini_poker.agents.human_agent import HumanAgent, play_vs_agent
+from mini_poker.agents.posterior_sampling_agent import PosteriorSamplingAgent
 
 
-def load_agent():
+def load_good_agent():
     game = MiniPoker(4, 52)
-    agent = NewAgent(game, epochs=1000, lr=0.001, rollout_samples=20, explore_proba=0.01, max_sigma=2.)
+    agent = PosteriorSamplingAgent(game, epochs=1_000, lr=0.001, rollout_samples=10, explore_proba=0.01, max_sigma=2.)
     trainer = AgentTrainer(agent)
     trainer.run()
     return agent
@@ -19,10 +19,10 @@ def load_agent():
 def test_human_v_ai():
     # Initialize game settings
     game = MiniPoker(game_power=4, deck_size=52)
-    save_path = DATA_DIR / "match_history.json"
+    save_path = GAME_DATA_DIR / "match_history.json"
 
     # Players
-    ai_agent = load_agent()  # Ensure this function is defined in your scope
+    ai_agent = load_good_agent()
     human = HumanAgent(game)
 
     # 1. Load existing data if possible

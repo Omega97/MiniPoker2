@@ -1,13 +1,20 @@
 import numpy as np
 from mini_poker.game import MiniPoker
-from mini_poker.agents.base_agent import Infoset
 from mini_poker.training.trainer import AgentTrainer
+from mini_poker.utils import card_to_num
+from mini_poker.agents.base_agent import Infoset
 from mini_poker.agents.new_agent import NewAgent
+from mini_poker.agents.posterior_sampling_agent import PosteriorSamplingAgent
 
 
 def load_agent():
     game = MiniPoker(4, 52)
-    agent = NewAgent(game, epochs=1000, lr=0.001, rollout_samples=20, explore_proba=0.01, max_sigma=2.)
+
+    # Load agent
+    # agent = NewAgent(game, epochs=1000, lr=0.001, rollout_samples=20, explore_proba=0.01, max_sigma=2.)
+    # agent = PosteriorSamplingAgent(game, epochs=300, lr=0.01, rollout_samples=1, explore_proba=0.01, max_sigma=5.)
+    agent = PosteriorSamplingAgent(game, epochs=1_000, lr=0.001, rollout_samples=10, explore_proba=0.01, max_sigma=2.)
+
     trainer = AgentTrainer(agent)
     trainer.run()
     return agent
@@ -77,18 +84,19 @@ def analyze_infoset_and_posterior(agent, my_card, history):
     return action_probs, posterior
 
 
-def test_ask_policy(my_hand:int, path: str, length=30):
+def test_ask_policy(my_hand: str, path: str, length=30):
     """
     Ask the policy what to do
-    :param my_hand: integer 0-51
+    :param my_hand: "Ah", "Td", "7c", "2s", ...
     :param path: non-terminal game node ("", "C", "CR", "RR", "D", ...)
     :param length:
     :return:
     """
+    my_hand_int = card_to_num(*my_hand)
 
     # Compute proba
     agent = load_agent()
-    probs, post = analyze_infoset_and_posterior(agent, my_hand, path)
+    probs, post = analyze_infoset_and_posterior(agent, my_hand_int, path)
 
     # 1. Find the maximum probability to use as a denominator for scaling
     max_p = max(post)
@@ -103,12 +111,17 @@ def test_ask_policy(my_hand:int, path: str, length=30):
         # Display the actual percentage alongside the relative bar
         print(f"  Card {c:2}  |{p:6.1%} | {bar}")
 
-    print(f"\nHand: {my_hand}")
+    print(f"\nHand: {my_hand_int}")
 
     print(f"\nMy Action Probs at history '{path}':")
     for action, prob in probs.items():
-        print(f"  {action}: {prob:5.1%}")
+        print(f"  {action}: {prob:7.1%}")
+
+    actions = list(probs.keys())
+    probabilities = list(probs.values())
+    recommended_action = np.random.choice(actions, p=probabilities)
+    print(f"\nRANDOM ACTION: {recommended_action}")
 
 
 if __name__ == '__main__':
-    test_ask_policy(51, "R")
+    test_ask_policy("Ah", "R")

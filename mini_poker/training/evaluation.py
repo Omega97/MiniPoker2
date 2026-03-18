@@ -65,10 +65,11 @@ def evaluate_agents(game: MiniPoker, agent_a, agent_b, n_games=10000):
 
 def all_v_all_tournament(game: MiniPoker, agents: list, n_games=100_000, random_seed=0):
     random.seed(random_seed)
+    name_len = max([len(f"{agent}") for agent in agents])
     print(f"\nResults after {n_games} games")
     for i in range(len(agents)):
         agent_1 = agents[i]
-        print(f"{str(agent_1):>60}", end=" ")
+        print(f"{str(agent_1):>{name_len}}", end=" ")
         for j in range(i):
             agent_2 = agents[j]
             avg_p1, avg_p2 = evaluate_agents(game, agent_1, agent_2, n_games=n_games)
