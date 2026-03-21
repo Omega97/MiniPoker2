@@ -1,190 +1,164 @@
-import random
-from time import time
-from mini_poker.agents.base_agent import BaseAgent, Infoset
+import numpy as np
+from collections import defaultdict
+from mini_poker.agents.base_agent import BaseAgent
+from mini_poker.agents.counterfactual_agent import Infoset
+from itertools import permutations
 
 
-class CounterfactualRegretMinimizationAgent(BaseAgent):
+class CRMAgent(BaseAgent):
     """
-    Counterfactual Regret Minimization (MCCFR) agent.
-
-    This is a Monte-Carlo Counterfactual Regret Minimization implementation:
-    - Samples full trajectories (policy-based or uniform random for exploration)
-    - Accumulates linear-weighted average strategy (converges to Nash equilibrium)
-    - Computes counterfactual action values via rollouts from the current infoset
-    - Updates cumulative regrets with advantages
-    - Applies standard regret-matching to obtain the instantaneous strategy
-    - Uses the instantaneous strategy for sampling and action selection (standard CFR practice)
-
-    The average strategy (get_average_policy) is the theoretically guaranteed equilibrium strategy,
-    but get_action continues to use the instantaneous (regret-matched) policy for consistency
-    with other agents in the framework.
+    Counterfactual Regret Minimization Agent.
+    Following the architecture of CEM2Agent but utilizing
+    Cumulative Regret and Regret Matching for policy updates.
     """
 
     def __init__(self,
                  game,
-                 epochs=10_000,
-                 rollout_samples=5,
-                 explore_proba=0.0):
+                 logit_bound=10.,
+                 epochs=50,
+                 lr=1.0,  # In CFR, 'lr' acts as a regret scaling factor
+                 max_sigma=5.0,
+                 momentum=0.9):  # Momentum is highly effective for CFR convergence
+
         self.epochs = epochs
-        self.rollout_samples = rollout_samples
-        self.explore_proba = explore_proba
+        self.lr = lr
+        self.max_sigma = max_sigma
+        self.momentum = momentum
 
-        # CFR-specific storage
-        self.regrets = {}
-        self.policy_sum = {}
+        # Buffers for CFR
+        # cumulative_regret: sum of (action_value - node_value) over time
+        self.cumulative_regret = defaultdict(lambda: defaultdict(float))
+        # strategy_sum: used to compute the average strategy (the Nash Equilibrium)
+        self.strategy_sum = defaultdict(lambda: defaultdict(float))
 
-        # Progress tracking (same as CounterfactualAgent)
-        self.t0 = None
-        self.epoch_start = None
+        super().__init__(game, logit_bound)
 
-        super().__init__(game)
-        self._init_regret_structures()
-        self._init_name()
+        # Precompute kernels for card abstraction/smoothing
+        self._kernel_matrix = self._precompute_kernels()
 
     def _init_name(self):
-        self.name = f"{type(self).__name__}({self.game.game_power},{self.game.deck_size})"
-        self.name += f"_e{self.epochs}"
-        self.name += f"_r{self.rollout_samples}"
-        self.name += f"_p{self.explore_proba * 100:.0f}"
+        self.name = f"CRM({self.game.game_power},{self.game.deck_size})_e{self.epochs}_s{self.max_sigma:.1f}"
 
-    def _init_regret_structures(self):
-        """Initialize regrets and average-strategy accumulators for every infoset."""
-        for history, actions in self.game_tree.items():
-            for card in range(self.deck_size):
-                infoset = Infoset(card, history)
-                self.regrets[infoset] = {a: 0.0 for a in actions}
-                self.policy_sum[infoset] = {a: 0.0 for a in actions}
-                # Current policy is already uniform (handled by BaseAgent)
+    def _precompute_kernels(self):
+        """Standard Gaussian kernel lookup table for card smoothing."""
+        matrix = []
+        for card in range(self.deck_size):
+            normalized_strength = card / (self.deck_size - 1)
+            variance = self.max_sigma * (1.0 - normalized_strength)
 
-    def get_average_policy(self, infoset: Infoset) -> dict:
-        """Return the average strategy (the strategy that converges to Nash)."""
-        sum_weights = sum(self.policy_sum[infoset].values())
-        if sum_weights > 0:
-            return {a: val / sum_weights for a, val in self.policy_sum[infoset].items()}
+            if variance < 1e-6:
+                weights = np.zeros(self.deck_size)
+                weights[card] = 1.0
+            else:
+                cards = np.arange(self.deck_size)
+                weights = np.exp(-((cards - card) ** 2) / (2 * variance))
+                weights /= np.sum(weights)
+            matrix.append(weights)
+        return np.array(matrix)
+
+    def _regret_matching(self, infoset: Infoset):
+        """
+        Updates the policy based on cumulative regrets.
+        Actions with higher positive regret get higher probability.
+        """
+        regrets = self.cumulative_regret[infoset]
         actions = self.game.tree[infoset.branch]
-        return {a: 1.0 / len(actions) for a in actions}
 
-    def _regret_matching_update(self, infoset):
-        """Update current policy from positive cumulative regrets (regret matching)."""
-        regrets = self.regrets[infoset]
-        positive_regrets = {a: max(0.0, r) for a, r in regrets.items()}
-        total_pos_regret = sum(positive_regrets.values())
+        # Get positive regrets
+        pos_regrets = {a: max(0.0, regrets[a]) for a in actions}
+        sum_pos_regret = sum(pos_regrets.values())
 
-        if total_pos_regret > 0:
-            new_policy = {a: r / total_pos_regret for a, r in positive_regrets.items()}
+        if sum_pos_regret > 0:
+            new_policy = {a: pos_regrets[a] / sum_pos_regret for a in actions}
         else:
-            actions = self.game.tree[infoset.branch]
+            # Default to uniform if no positive regret exists
             new_policy = {a: 1.0 / len(actions) for a in actions}
 
         self.set_policy(infoset, new_policy)
 
-    def sample_trajectory(self, card1, card2) -> dict:
-        """Sample a trajectory using the current (regret-matched) policy."""
-        visited = {}
-        history = ""
-        reach_prob = 1.0
-        while history not in self.game.terminals:
-            player = len(history) % 2
-            card = card1 if player == 0 else card2
-            infoset = Infoset(card, history)
-            visited[infoset] = reach_prob
-            probs = self.policy[infoset]
-            action = random.choices(list(probs.keys()), weights=list(probs.values()))[0]
-            reach_prob *= probs[action]
-            history += action
-        return visited
-
-    def sample_random_trajectory(self, card1, card2) -> dict:
-        """Uniform random trajectory (used during exploration)."""
-        visited = {}
-        history = ""
-        reach_prob = 1.0
-        while history not in self.game.terminals:
-            player = len(history) % 2
-            card = card1 if player == 0 else card2
-            infoset = Infoset(card, history)
-            visited[infoset] = reach_prob
-            actions = self.game.tree[history]
-            action = random.choice(actions)
-            reach_prob *= (1.0 / len(actions))
-            history += action
-        return visited
-
-    def print_progress(self, epoch, t_long=600):
-        """Identical progress reporting as CounterfactualAgent for UI consistency."""
-        time_left = None
-        tot_epochs = self.epochs * self.deck_size * (self.deck_size - 1)
-
-        if self.t0 is None:
-            self.t0 = time()
-            self.epoch_start = 0
-        else:
-            time_elapsed = time() - self.t0
-
-            if time_elapsed > t_long:
-                self.t0 = time()
-                self.epoch_start = epoch
-                time_elapsed = 0.001
-
-            recent_progress = epoch - self.epoch_start
-            if time_elapsed > 0:
-                speed = recent_progress / time_elapsed
-                remaining_epochs = tot_epochs - epoch
-                if speed > 0:
-                    time_left = remaining_epochs / speed
-
-        p = epoch / tot_epochs
-        out = f"\r{epoch:6})  {p:.2%}  S = {self.entropy():.4f}   F = {self.best_card_fold_index():.4f}"
-        if time_left is not None:
-            out += f"   time left: {time_left / 60:.0f} min"
-        print(out, end='')
-
-    def train(self, print_period=1000):
+    def _accumulate_regret(self, card1, card2):
         """
-        MCCFR training loop (one full pass over the deck per epoch).
-
-        For each sampled infoset on the trajectory:
-          1. Update the linear-weighted average strategy
-          2. Estimate counterfactual values for every legal action (via rollouts)
-          3. Compute advantages and accumulate regrets
-          4. Apply regret matching to obtain the new instantaneous strategy
+        Performs a traversal to calculate counterfactual values
+        and updates cumulative regret buffers.
         """
-        for iteration, (card1, card2) in enumerate(self.game.iter_uniformly(self.epochs)):
+        history = ""
+        self._traverse(history, card1, card2, 1.0, 1.0)
 
-            if iteration % print_period == 0:
-                self.print_progress(iteration)
+    def _traverse(self, history, card1, card2, p1_reach, p2_reach):
+        """Recursive tree traversal for CFR."""
+        if history in self.game.terminals:
+            # Return utility for both players
+            return self.game.get_reward(history, card1, card2)
 
-            # 1. Sample trajectory (policy or exploratory)
-            explore = (random.random() < self.explore_proba)
-            if explore:
-                visited_infosets = self.sample_random_trajectory(card1, card2)
+        player = len(history) % 2
+        my_card = card1 if player == 0 else card2
+        actions = self.game.tree[history]
+        infoset = Infoset(my_card, history)
+
+        # 1. Get current strategy
+        strategy = self.get_policy(infoset)
+
+        # 2. Compute action values (recursively)
+        action_utilities = {}
+        node_utility = 0.0
+
+        for action in actions:
+            if player == 0:
+                child_util = self._traverse(history + action, card1, card2, p1_reach * strategy[action], p2_reach)
+                action_utilities[action] = child_util[0]
             else:
-                visited_infosets = self.sample_trajectory(card1, card2)
+                child_util = self._traverse(history + action, card1, card2, p1_reach, p2_reach * strategy[action])
+                action_utilities[action] = child_util[1]
 
-            # 2. Process every infoset visited on this trajectory
-            for (card, history), reach_prob in visited_infosets.items():
-                infoset = Infoset(card, history)
-                player = len(history) % 2
-                actions = self.game.tree[history]
+            node_utility += strategy[action] * action_utilities[action]
 
-                # Update average strategy (linear CFR weighting)
-                current_p = self.get_policy(infoset)
-                for a in actions:
-                    self.policy_sum[infoset][a] += current_p[a] * reach_prob * (iteration + 1)
+        # 3. Update Cumulative Regret (weighted by opponent reach probability)
+        opp_reach = p2_reach if player == 0 else p1_reach
+        kernel = self._kernel_matrix[my_card]
 
-                # Counterfactual value estimation for every action
-                action_values = {}
-                for action in actions:
-                    rewards = self.evaluate_action(history, action, card1, card2, self.rollout_samples)
-                    action_values[action] = rewards[player]
+        for card_idx, weight in enumerate(kernel):
+            if weight < 1e-4: continue
 
-                # Baseline (current expected value)
-                ev = sum(current_p[a] * action_values[a] for a in actions)
+            sim_infoset = Infoset(card_idx, history)
+            for action in actions:
+                regret = (action_utilities[action] - node_utility) * opp_reach * weight
+                self.cumulative_regret[sim_infoset][action] = (
+                        self.momentum * self.cumulative_regret[sim_infoset][action] + self.lr * regret
+                )
 
-                # Accumulate regrets (advantage = counterfactual value difference)
-                for a in actions:
-                    regret = action_values[a] - ev
-                    self.regrets[infoset][a] += regret
+            # Update strategy sum (for average strategy calculation)
+            my_reach = p1_reach if player == 0 else p2_reach
+            for action in actions:
+                self.strategy_sum[sim_infoset][action] += my_reach * strategy[action] * weight
 
-                # Regret matching → new instantaneous strategy
-                self._regret_matching_update(infoset)
+        return (node_utility, -node_utility) if player == 0 else (-node_utility, node_utility)
+
+    def train(self):
+        print(f"\nTraining {self} using Regret Minimization...")
+        for epoch in range(self.epochs):
+            # Visit all card combinations
+            for c1, c2 in permutations(range(self.deck_size), 2):
+                self._accumulate_regret(c1, c2)
+
+            # Update policies for all infosets based on new regrets
+            for history in self.game.tree:
+                for card in range(self.deck_size):
+                    self._regret_matching(Infoset(card, history))
+
+            if epoch % 5 == 0:
+                print(f"Epoch {epoch}/{self.epochs} | Entropy: {self.entropy():.4f}")
+
+    def get_average_strategy(self):
+        """
+        CFR theory states the average strategy converges to Nash.
+        This method computes that average from the strategy_sum buffer.
+        """
+        avg_policy = {}
+        for infoset, action_sums in self.strategy_sum.items():
+            total = sum(action_sums.values())
+            if total > 0:
+                avg_policy[infoset] = {a: s / total for a, s in action_sums.items()}
+            else:
+                actions = self.game.tree[infoset.branch]
+                avg_policy[infoset] = {a: 1.0 / len(actions) for a in actions}
+        return avg_policy

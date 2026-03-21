@@ -5,18 +5,18 @@ Suits: ♠️s ♣️c ♦️d ♥️h
 Ranks: 2 3 4 5 6 7 8 9 T J Q K A
 Moves: F C R D T A
 """
-from tests.test_human_agent import test_human_v_ai
-from tests.test_ask_policy import test_ask_policy
-from tests.test_show_policy import test_show_good_policy
+from scripts.human_vs_ai import human_vs_ai
+from scripts.show_good_policy import show_good_policy
+from scripts.ask_the_policy import ask_the_policy
+
 
 if __name__ == '__main__':
 
     # === Play with AI ===
-    # test_human_v_ai()
+    # human_vs_ai()
 
     # === Show Policy ===
-    test_show_good_policy()
+    # show_good_policy()
 
     # === Ask AI the best move ===
-    # test_ask_policy("Kh", "RR")
-
+    ask_the_policy("Th", "R")

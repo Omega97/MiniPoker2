@@ -1,9 +1,60 @@
 """ Mini-Poker AI """
 from itertools import permutations
+from dataclasses import dataclass, replace
+import ast
 
 
 LABELS = {2: 'R', 4: 'D', 8: 'T', 16: 'Q', 32: '5', 64: '6', 128: '7'}
 INV_LABELS = {name: n for n, name in LABELS.items()}
+
+
+@dataclass
+class Infoset:
+    card: int
+    branch: str
+
+    def get_values(self) -> tuple:
+        return self.card, self.branch
+
+    def __repr__(self):
+        return f'Infoset({self.card}, "{self.branch}")'
+
+    def __iter__(self):
+        yield from self.get_values()
+
+    def __hash__(self):
+        return hash(self.get_values())
+
+
+@dataclass
+class State:
+    card_p1: int
+    card_p2: int
+    branch: str
+
+    def get_values(self) -> tuple:
+        return self.card_p1, self.card_p2, self.branch
+
+    def __repr__(self):
+        return f'State({self.card_p1}, {self.card_p2}, "{self.branch}")'
+
+    def __iter__(self):
+        yield from self.get_values()
+
+    def __hash__(self):
+        return hash(self.get_values())
+
+    def copy(self) -> 'State':
+        return replace(self)
+
+
+def to_infoset(key_str: str) -> Infoset:
+    """
+    Helper to reconstruct Infoset from string key:
+    [card, 'history']
+    """
+    card, history = ast.literal_eval(key_str)
+    return Infoset(card, history)
 
 
 class MiniPoker:
@@ -100,9 +151,9 @@ class MiniPoker:
             return self.stack
         return INV_LABELS.get(label, 1)
 
-    def get_reward(self, history, p1_card, p2_card) -> tuple:
+    def get_reward(self, state: State) -> tuple:
         """Compute the reward for both players as a tuple: (p1_reward, p2_reward)."""
-        p1_comm, p2_comm, is_fold, acting_p = self.terminals[history]
+        p1_comm, p2_comm, is_fold, acting_p = self.terminals[state.branch]
 
         if is_fold:
             # The acting player is the one who folded
@@ -112,14 +163,14 @@ class MiniPoker:
                 return p2_comm, -p2_comm
 
         # Showdown
-        if p1_card > p2_card:
+        if state.card_p1 > state.card_p2:
             return p2_comm, -p2_comm
-        elif p1_card < p2_card:
+        elif state.card_p1 < state.card_p2:
             return -p1_comm, p1_comm
         else:
             return 0, 0
 
-    def iter_uniformly(self, epochs):
+    def iter_uniformly_over_hands(self, epochs):
         """
         Iterate over card combinations uniformly
         for a certain number of epochs.

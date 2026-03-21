@@ -1,41 +1,14 @@
 import random
 import math
 from typing import Dict
-from dataclasses import dataclass
 import os
 import json
-import ast
 from pathlib import Path
-from mini_poker.game import MiniPoker
+from time import time
+from mini_poker.game import MiniPoker, Infoset, to_infoset, State
 from mini_poker.utils import clip
 from mini_poker.paths import DATA_DIR
-
-
-@dataclass
-class Infoset:
-    card: int
-    branch: str
-
-    def get_values(self) -> tuple:
-        return self.card, self.branch
-
-    def __repr__(self):
-        return f'Infoset({self.card}, "{self.branch}")'
-
-    def __iter__(self):
-        yield from self.get_values()
-
-    def __hash__(self):
-        return hash(self.get_values())
-
-
-def to_infoset(key_str: str) -> Infoset:
-    """
-    Helper to reconstruct Infoset from string key:
-    [card, 'history']
-    """
-    card, history = ast.literal_eval(key_str)
-    return Infoset(card, history)
+from mini_poker.training.evaluation import evaluate_agents
 
 
 class BaseAgent:
@@ -47,14 +20,20 @@ class BaseAgent:
     - convert logits -> softmax policy
     - sample actions
     """
-    def __init__(self, game: MiniPoker, logit_bound=10.):
+    def __init__(self, game: MiniPoker, logit_bound=10., epochs=None, n_games_compare=10_000):
         self.game = game
+        self.epochs = epochs
         self.logit_bound = logit_bound
+        self.n_games_compare = n_games_compare
         self.deck_size = game.deck_size
         self.game_tree = game.tree
         self.logits = {}
         self.policy = {}
         self.name = None
+        self.compare_agent = None
+        self.epoch = None
+        self.ev_list = None
+        self.times = None
 
         self._init_policy()
         self._init_name()
@@ -134,24 +113,24 @@ class BaseAgent:
         proba = {a: exps[a] / Z for a in raw_logits}
         self.set_policy(infoset, proba)
 
-    def rollout(self, history, card1, card2):
+    def rollout(self, state: State):
         """Returns (p1_reward, p2_reward)"""
-        h = history
-        while h not in self.game.terminals:
-            player = len(h) % 2
-            card = card1 if player == 0 else card2
-            infoset = Infoset(card, h)
+        while state.branch not in self.game.terminals:
+            player = len(state.branch) % 2
+            card = state.card_p1 if player == 0 else state.card_p2
+            infoset = Infoset(card, state.branch)
             action = self.get_action(infoset)
-            h += action
-        return self.game.get_reward(h, card1, card2)
+            state.branch += action
+        return self.game.get_reward(state)
 
-    def evaluate_action(self, history, action, card1, card2, rollout_samples) -> tuple:
+    def evaluate_action(self, state: State, action, rollout_samples) -> tuple:
         """Evaluate action by averaging rollout rewards."""
         total_p1 = 0
         total_p2 = 0
         for _ in range(rollout_samples):
-            temp_h = history + action
-            r1, r2 = self.rollout(temp_h, card1, card2)
+            temp_state = state.copy()
+            temp_state.branch += action
+            r1, r2 = self.rollout(temp_state)
             total_p1 += r1
             total_p2 += r2
         value_p1 = total_p1 / rollout_samples
@@ -260,11 +239,47 @@ class BaseAgent:
             for prob in probs.values():
                 # Entropy is 0 if probability is 0; use a small epsilon or check > 0
                 if prob > 0:
-                    infoset_entropy -= prob * math.log(prob)
+                    infoset_entropy -= prob * math.log2(prob)
 
             total_entropy += infoset_entropy
 
         return total_entropy / num_infosets
+
+    def terminal_entropy(self) -> float:
+        """
+        Calculates the average Shannon entropy across only the
+        information sets that lead directly to terminal states.
+        """
+        if not self.policy:
+            return 0.0
+
+        total_entropy = 0.0
+        terminal_infoset_count = 0
+
+        for infoset, probs in self.policy.items():
+            # Check if all possible actions from this history result in a terminal state
+            actions = self.game_tree.get(infoset.branch, [])
+            if not actions:
+                continue
+
+            is_terminal_decision = all(
+                (infoset.branch + a) in self.game.terminals
+                for a in actions
+            )
+
+            if is_terminal_decision:
+                infoset_entropy = 0.0
+                for prob in probs.values():
+                    if prob > 0:
+                        infoset_entropy -= prob * math.log2(prob)
+
+                total_entropy += infoset_entropy
+                terminal_infoset_count += 1
+
+        if terminal_infoset_count == 0:
+            return 0.0
+
+        return total_entropy / terminal_infoset_count
 
     def best_card_fold_index(self) -> float:
         """
@@ -332,6 +347,55 @@ class BaseAgent:
         print(f"Sanity Check: {saturated_count}/{total_infosets} infosets are fully saturated.")
         return saturated_count
 
-    def train(self):
+    def set_compare_agent(self, agent):
+        """Set agent to compare with during training."""
+        self.compare_agent = agent
+
+    def training(self):
         """Blanket training method"""
+        print(f"\nTraining {self} ...")
+        self.ev_list = []
+        self.times = [time()]
+        print(self.get_progress_bar())
+        for self.epoch in range(self.epochs):
+            self.training_epoch()
+            if self.compare_agent is not None:
+                ev_self, ev_other = evaluate_agents(self.game, self, self.compare_agent, n_games=self.n_games_compare)
+                self.ev_list.append(ev_self)
+            self.times.append(time())
+            print(self.get_progress_bar())
+
+    def get_progress_bar(self, epsilon=1e-6):
+        bar = ""
+
+        # Epochs
+        if self.epoch is not None:
+            bar += f"{self.epoch+1:3})"
+            bar += f"  {(self.epoch+1) / self.epochs:7.2%}"
+        else:
+            bar += f"{0:3})"
+            bar += f"  {0:7.2%}"
+
+        # EVs
+        if self.ev_list is not None and len(self.ev_list):
+            bar += f"  {self.ev_list[-1]:+6.2f}"
+        else:
+            bar += f"    --- "
+
+        # Time
+        if self.times is not None and len(self.times) >= 2:
+            time_elapsed = self.times[-1] - self.times[-2]
+            speed = 1 / (time_elapsed + epsilon)
+            epochs_left = self.epochs - self.epoch
+            time_left = epochs_left / speed
+            if time_left > 60:
+                bar += f"   eta: {time_left//60:3.0f} min"
+            else:
+                bar += f"   eta: {time_left:3.0f} s  "
+        else:
+            bar += f"   eta: ???    "
+
+        return bar
+
+    def training_epoch(self):
         pass

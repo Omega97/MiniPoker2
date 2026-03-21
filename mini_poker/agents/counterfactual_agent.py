@@ -1,5 +1,4 @@
 import random
-from time import time
 from typing import Dict
 from mini_poker.agents.base_agent import BaseAgent, Infoset
 from mini_poker.game import MiniPoker
@@ -15,8 +14,9 @@ class CounterfactualAgent(BaseAgent):
     def __init__(self,
                  game: MiniPoker,
                  logit_bound=10.,
-                 epochs=10_000,
-                 lr=0.001,
+                 epochs=1_000,
+                 n_games_compare=10_000,
+                 lr=0.01,
                  rollout_samples=1,
                  explore_proba=0.01,
                  ):
@@ -24,9 +24,8 @@ class CounterfactualAgent(BaseAgent):
         self.lr = lr
         self.rollout_samples = rollout_samples
         self.explore_proba = explore_proba
-        self.t0 = None
-        self.epoch_start = None
-        super().__init__(game, logit_bound)
+        self.visited_infosets = None
+        super().__init__(game, logit_bound, epochs=epochs, n_games_compare=n_games_compare)
 
     def _init_name(self):
         self.name = f"{type(self).__name__}({self.game.game_power},{self.game.deck_size})"
@@ -68,44 +67,19 @@ class CounterfactualAgent(BaseAgent):
             history += action
         return visited
 
-    def print_progress(self, epoch, t_long=600):
-        time_left = None
-        tot_epochs = self.epochs * self.deck_size * (self.deck_size - 1)
+    def get_progress_bar(self, epsilon=1e-6):
+        bar = super().get_progress_bar()
+        bar += f"   S = {self.entropy():.4f}"
+        bar += f"   St = {self.terminal_entropy():.4f}"
+        bar += f"   F = {self.best_card_fold_index():.4f}"
 
-        if self.t0 is None:
-            self.t0 = time()
-            self.epoch_start = 0  # Track progress at the last reset
-        else:
-            time_elapsed = time() - self.t0
-
-            # Check if 10 minutes have passed
-            if time_elapsed > t_long:
-                self.t0 = time()
-                self.epoch_start = epoch
-                time_elapsed = 0.001  # Prevent division by zero immediately after reset
-
-            # Calculate speed based on progress since the last reset
-            recent_progress = epoch - self.epoch_start
-            if time_elapsed > 0:
-                speed = recent_progress / time_elapsed
-                remaining_epochs = tot_epochs - epoch
-                if speed > 0:
-                    time_left = remaining_epochs / speed
-
-        p = epoch / tot_epochs
-        out = f"\r{epoch:6})  {p:.2%}  S = {self.entropy():.4f}   F = {self.best_card_fold_index():.4f}"
-        if time_left is not None:
-            out += f"   time left: {time_left / 60:.0f} min"
-        print(out, end='')
-
-    def _explore_trajectory(self, card1, card2):
+    def explore_trajectory(self, card1, card2):
         """ Sample a single trajectory through the game tree. """
         explore = (random.random() < self.explore_proba)
         if explore:
-            visited_infosets = self.sample_random_trajectory(card1, card2)
+            self.visited_infosets = self.sample_random_trajectory(card1, card2)
         else:
-            visited_infosets = self.sample_trajectory(card1, card2)
-        return visited_infosets
+            self.visited_infosets = self.sample_trajectory(card1, card2)
 
     def get_baseline(self, actions, action_values, infoset) -> float:
         # Calculate the baseline (expected value) for the current policy
@@ -135,23 +109,21 @@ class CounterfactualAgent(BaseAgent):
             action_values[action] = rewards[player]
         return action_values
 
-    def update_visited_infosets(self, visited_infosets, card1, card2):
+    def update_visited_infosets(self, card1, card2):
         """ Update each visited information set. """
-        for (card, history), reach_prob in visited_infosets.items():
+        for (card, history), reach_prob in self.visited_infosets.items():
             infoset = Infoset(card, history)
             actions = self.game.tree[history]
             action_values = self.get_action_values(actions, history, card1, card2)
             self._update_rule(actions, action_values, infoset)
 
-    def train(self, print_period=1000):
+    def training_epoch(self):
         """
         Simplified training loop:
         1. Sample a trajectory.
         2. Calculate advantage for visited nodes.
         3. Update logits.
         """
-        for iteration, (card1, card2) in enumerate(self.game.iter_uniformly(self.epochs)):
-            if iteration % print_period == 0:
-                self.print_progress(iteration)
-            visited_infosets = self._explore_trajectory(card1, card2)
-            self.update_visited_infosets(visited_infosets, card1, card2)
+        for iteration, (card1, card2) in enumerate(self.game.iter_uniformly_over_hands(self.epochs)):
+            self.explore_trajectory(card1, card2)
+            self.update_visited_infosets(card1, card2)

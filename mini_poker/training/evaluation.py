@@ -1,7 +1,6 @@
 import random
-from mini_poker.agents.base_agent import Infoset
 from mini_poker.utils import print_colored_status
-from mini_poker.game import MiniPoker
+from mini_poker.game import MiniPoker, Infoset, State
 
 
 def _evaluate_agents_fixed_position(game: MiniPoker, agent_p1, agent_p2, n_games=1000):
@@ -16,7 +15,7 @@ def _evaluate_agents_fixed_position(game: MiniPoker, agent_p1, agent_p2, n_games
     n_combinations = game.deck_size * (game.deck_size - 1)
     epochs = max(1, round(n_games / n_combinations))
 
-    for p1_card, p2_card in game.iter_uniformly(epochs):
+    for p1_card, p2_card in game.iter_uniformly_over_hands(epochs):
         # 1. Deal random cards (permutations ensures no duplicate cards)
         history = ""
 
@@ -35,14 +34,15 @@ def _evaluate_agents_fixed_position(game: MiniPoker, agent_p1, agent_p2, n_games
             history += action
 
         # 3. Calculate rewards from the terminal state
-        r1, r2 = game.get_reward(history, p1_card, p2_card)
+        state = State(p1_card, p2_card, branch=history)
+        r1, r2 = game.get_reward(state)
         total_reward_p1 += r1
         total_reward_p2 += r2
 
     return total_reward_p1 / n_games, total_reward_p2 / n_games
 
 
-def evaluate_agents(game: MiniPoker, agent_a, agent_b, n_games=10000):
+def evaluate_agents(game: MiniPoker, agent_a, agent_b, n_games=10_000):
     """
     Evaluates two agents by swapping positions halfway through to eliminate
     positional bias. Returns the net average for Agent A and Agent B.

@@ -72,7 +72,7 @@ class AgentTrainer:
         """Trigger the agent's training process."""
         print(f"\nTraining {self.agent}")
         random.seed(self.random_seed)
-        self.agent.train()
+        self.agent.training()
 
     def _save(self):
         """Save the agent to disk."""
