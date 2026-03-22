@@ -79,9 +79,6 @@ class CounterfactualEMAgent(BaseAgent):
         bar += f"   F = {self.best_card_fold_index():.4f}"
         return bar
 
-    def plot_training_ev(self, label=""):
-        plt.plot(self.ev_list, label=label)
-
     def get_baseline(self, actions, action_values, infoset) -> float:
         # Calculate the baseline (expected value) for the current policy
         probs = self.get_policy(infoset)

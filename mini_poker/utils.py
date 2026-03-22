@@ -1,28 +1,30 @@
 
+# ANSI escape code sequences
+COLORS = {"red": "\033[91m",
+          "green": "\033[92m",
+          "white": "\033[97m",
+          "reset": "\033[0m"}
+
 
 def clip(x, low, high):
     return max(low, min(high, x))
 
 
-def print_colored_status(text: str, value: float):
+def print_colored_status(value: float, text: str=None,
+                         green=COLORS["green"], red=COLORS["red"]):
     """
     Prints text in color based on the sign of value.
     Red for negative, Green for positive, White for zero.
     """
-    # ANSI escape code sequences
-    RED = "\033[91m"
-    GREEN = "\033[92m"
-    WHITE = "\033[97m"
-    RESET = "\033[0m"
-
     if value < 0:
-        color = RED
+        color = red
     elif value > 0:
-        color = GREEN
+        color = green
     else:
-        color = WHITE
-
-    return f"{color}{text}{RESET}"
+        color = COLORS['white']
+    if text is None:
+        text = str(value)
+    return f"{color}{text}{COLORS['reset']}"
 
 
 def card_to_num(rank: str, suit: str) -> int:

@@ -73,6 +73,6 @@ def all_v_all_tournament(game: MiniPoker, agents: list, n_games=100_000, random_
         for j in range(i):
             agent_2 = agents[j]
             avg_p1, avg_p2 = evaluate_agents(game, agent_1, agent_2, n_games=n_games)
-            s = print_colored_status(f"{avg_p1:+5.2f}", round(avg_p1, 2))
+            s = print_colored_status(round(avg_p1, 2), text=f"{avg_p1:+5.2f}")
             print(f" {s}", end=' ')
         print()

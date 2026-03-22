@@ -1,5 +1,6 @@
 import random
 from mini_poker.agents.base_agent import BaseAgent, Infoset
+from mini_poker.game import State
 
 
 class HumanAgent(BaseAgent):
@@ -62,7 +63,8 @@ def play_vs_agent(game, agent_p1, agent_p2):
             input()
 
     # 3. Final Results
-    r1, r2 = game.get_reward(history, p1_card, p2_card)
+    state = State(p1_card, p2_card, branch=history)
+    r1, r2 = game.get_reward(state)
 
     print(f"\nTERMINAL STATE: '{history}'")
     print(f"👀 P1 Card: [{p1_card:2}] | P2 Card: [{p2_card:2}]")

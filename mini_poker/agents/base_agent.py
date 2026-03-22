@@ -5,10 +5,13 @@ import os
 import json
 from pathlib import Path
 from time import time
+import matplotlib.pyplot as plt
+import numpy as np
 from mini_poker.game import MiniPoker, Infoset, to_infoset, State
 from mini_poker.utils import clip
 from mini_poker.paths import DATA_DIR
 from mini_poker.training.evaluation import evaluate_agents
+from mini_poker.utils import print_colored_status, COLORS
 
 
 class BaseAgent:
@@ -378,7 +381,8 @@ class BaseAgent:
 
         # EVs
         if self.ev_list is not None and len(self.ev_list):
-            bar += f"  {self.ev_list[-1]:+6.2f}"
+            ev = self.ev_list[-1]
+            bar += print_colored_status(ev, text=f"  {ev:+6.2f}", red=COLORS['white'])
         else:
             bar += f"    --- "
 
@@ -396,6 +400,38 @@ class BaseAgent:
             bar += f"   eta: ???    "
 
         return bar
+
+    def plot_training_ev(self, label="", max_window_size=50):
+        if not self.ev_list:
+            return
+
+        y = np.array(self.ev_list)
+        n = len(y)
+        y_smooth = np.zeros(n)
+
+        for i in range(n):
+            # 1. Determine dynamic window size
+            # (Growing window: small at start, large at end)
+            win_size = max(1, int(((i + 1) / n) * max_window_size))
+
+            # 2. Slice the data for the current window
+            start_idx = max(0, i - win_size + 1)
+            window_data = y[start_idx: i + 1]
+            current_len = len(window_data)
+
+            if current_len == 1:
+                y_smooth[i] = window_data[0]
+                continue
+
+            # 3. Create Linear Kernel Weights: y = 2x
+            # x is normalized distance within the window [0, 1]
+            # We want the most recent point (index -1) to have the highest weight
+            weights = np.linspace(0.1, 1.0, current_len)
+
+            # 4. Apply Weighted Average
+            y_smooth[i] = np.average(window_data, weights=weights)
+
+        plt.plot(y_smooth, label=label)
 
     def training_epoch(self):
         pass
