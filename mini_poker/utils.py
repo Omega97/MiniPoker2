@@ -1,3 +1,5 @@
+import numpy as np
+
 
 # ANSI escape code sequences
 COLORS = {"red": "\033[91m",
@@ -63,3 +65,19 @@ def num_to_card(num: int):
     rank = ranks[num // 4]
     suit = suits[num % 4]
     return rank, suit
+
+
+def clip_proba(a, threshold: float = 1e-3) -> np.ndarray:
+    """Clip probabilities below threshold to zero and renormalize."""
+    arr = np.asarray(a, dtype=np.float64)
+
+    if arr.ndim != 1:
+        raise ValueError("Input must be 1D")
+
+    arr[arr <= threshold] = 0.0
+    total = arr.sum()
+
+    if total == 0:
+        raise ValueError("Cannot normalize: total probability is zero after clipping")
+
+    return arr / total

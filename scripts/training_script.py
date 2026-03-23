@@ -30,9 +30,9 @@ def main(game_power=4, deck_size=52, n_games=20_000):
 
     # --- CRM ---
     name = 'crm'
-    agents[name] = CRMAgent(game, epochs=300, explore_proba=0.1, n_games_compare=n_games)  # 3000, 4000 0.1
+    agents[name] = CRMAgent(game, epochs=300, explore_proba=0.1, n_games_compare=n_games)
     agents[name].set_compare_agent(agent_good)
-    trainer = AgentTrainer(agents[name], force_training=True)
+    trainer = AgentTrainer(agents[name])
     trainer.run()
 
     # Evaluation

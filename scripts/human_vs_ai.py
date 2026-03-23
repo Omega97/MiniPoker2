@@ -1,19 +1,18 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import json
-from mini_poker.game import MiniPoker
 from mini_poker.paths import GAME_DATA_DIR
 from mini_poker.agents.human_agent import HumanAgent, play_vs_agent
-from scripts.load_good_agent import load_good_agent
 
 
-def human_vs_ai():
+def human_vs_ai(ai_agent):
     # Initialize game settings
-    game = MiniPoker(game_power=4, deck_size=52)
-    save_path = GAME_DATA_DIR / "match_history.json"
+    game = ai_agent.game
+    game_power = game.game_power
+    deck_size = game.deck_size
+    save_path = GAME_DATA_DIR / f"match_history_{game_power}_{deck_size}.json"
 
     # Players
-    ai_agent = load_good_agent()
     human = HumanAgent(game)
 
     # 1. Load existing data if possible

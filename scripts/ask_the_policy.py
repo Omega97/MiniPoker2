@@ -1,5 +1,5 @@
 import numpy as np
-from mini_poker.utils import card_to_num
+from mini_poker.utils import card_to_num, clip_proba
 from mini_poker.agents.base_agent import Infoset
 from scripts.load_good_agent import load_good_agent
 
@@ -70,7 +70,7 @@ def analyze_infoset_and_posterior(agent, my_card, history):
     return action_probs, posterior
 
 
-def ask_the_policy(my_hand: str | int, path: str, length=30):
+def ask_the_policy(my_hand: str | int, path: str, agent, length=30, p_threshold=1e-3):
     """
     Ask the policy what to do
     :param my_hand: "Ah", "Td", "7c", ..., "2s" or 0, 1, ..., 51
@@ -81,7 +81,6 @@ def ask_the_policy(my_hand: str | int, path: str, length=30):
     my_hand_int = card_to_num(*my_hand) if type(my_hand) is str else my_hand
 
     # Compute proba
-    agent = load_good_agent()
     probs, post = analyze_infoset_and_posterior(agent, my_hand_int, path)
 
     # 1. Find the maximum probability to use as a denominator for scaling
@@ -97,17 +96,23 @@ def ask_the_policy(my_hand: str | int, path: str, length=30):
         # Display the actual percentage alongside the relative bar
         print(f"  Card {c:2}  |{p:6.1%} | {bar}")
 
-    print(f"\nHand: {my_hand_int}")
+    actions = list(probs.keys())
+    probabilities = np.array(list(probs.values()))
+    probabilities = clip_proba(probabilities, threshold=p_threshold)
+    recommended_action = np.random.choice(actions, p=probabilities)
 
+    print(f"\nHand: {my_hand_int}")
     print(f"\nMy Action Probs at history '{path}':")
-    for action, prob in probs.items():
+    for action, prob in zip(actions, probabilities):
         print(f"  {action}: {prob:7.1%}")
 
-    actions = list(probs.keys())
-    probabilities = list(probs.values())
-    recommended_action = np.random.choice(actions, p=probabilities)
     print(f"\nRANDOM ACTION: {recommended_action}")
 
 
+def main():
+    agent = load_good_agent(game_power=5, deck_size=52)
+    ask_the_policy("Ah", "CRR", agent=agent)
+
+
 if __name__ == '__main__':
-    ask_the_policy("Ah", "R")
+    main()
