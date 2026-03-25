@@ -99,13 +99,7 @@ class BaseAgent:
     def get_action(self, infoset: Infoset):
         """Sample action according to current policy."""
         probs = self.get_policy(infoset)
-        r = random.random()
-        cumulative = 0.0
-        for action in probs:
-            cumulative += probs[action]
-            if r < cumulative:
-                return action
-        return list(probs.keys())[-1]
+        return np.random.choice(list(probs.keys()), p=list(probs.values()))
 
     def softmax_update(self, infoset: Infoset):
         """Convert logits to policy probabilities."""
@@ -432,6 +426,113 @@ class BaseAgent:
             y_smooth[i] = np.average(window_data, weights=weights)
 
         plt.plot(y_smooth, label=label)
+
+    def analyze_infoset_and_posterior(self, infoset: Infoset, exclude_self_card=False):
+        """
+        Inputs:
+          agent: The trained agent (contains the policy).
+          my_card: The card currently in your hand.
+          history: The string of actions (e.g., "bc").
+
+        Returns:
+          action_probs: Probability of actions at the CURRENT state.
+          posterior: Distribution over what the opponent is representing.
+        """
+        game = self.game
+        num_cards = game.deck_size
+
+        # 1. Get the current action distribution for OUR hand
+        action_probs = self.get_policy(infoset)
+
+        # 2. Calculate Posterior Distribution over Opponent Cards
+        # We look at every card the opponent could have and see how likely
+        # they were to play the history given the agent's policy.
+        opponent_probs = np.zeros(num_cards)
+
+        for card_opp in range(num_cards):
+
+            # Exclude my card
+            if exclude_self_card:
+                if card_opp == infoset.card:
+                    opponent_probs[card_opp] = 0.0
+                    continue
+
+            # Probability that opponent reaches this history with this card
+            reach_prob = 1.0
+            temp_hist = ""
+
+            # Walk through the history string
+            for i, action in enumerate(infoset.branch):
+                # Check whose turn it was at this step
+                # Player 0 acts on even indices, Player 1 on odd
+                acting_player = i % 2
+
+                # If it was the OPPONENT's turn to act in the past
+                # (Assuming you are player 0 or 1 based on current history length)
+                my_player_index = len(infoset.branch) % 2
+                if acting_player != my_player_index:
+                    # How likely was the opponent to take this specific action?
+                    prev_infoset = Infoset(card_opp, temp_hist)
+                    probs = self.get_policy(prev_infoset)
+                    reach_prob *= probs.get(action, 0.0)
+
+                temp_hist += action
+
+            opponent_probs[card_opp] = reach_prob
+
+        # Normalize to get the posterior (Bayes' Update)
+        total_weight = np.sum(opponent_probs)
+        if total_weight > 0:
+            posterior = opponent_probs / total_weight
+        else:
+            # If the history is impossible for this policy, return uniform
+            posterior = np.ones(num_cards) / (num_cards - 1)
+            posterior[infoset.card] = 0
+
+        return action_probs, posterior
+
+    def bayesian_evaluate_action(self, infoset: Infoset, action: str, n_samples: int = 100) -> tuple:
+        """
+        Evaluate an action using Bayesian inference over opponent's possible cards.
+
+        Samples opponent cards from the posterior distribution given the current
+        infoset and policy, then evaluates the action via rollouts.
+
+        Args:
+            infoset: Current information set (card + history)
+            action: Action to evaluate
+            n_samples: Number of opponent card samples to draw
+
+        Returns:
+            tuple: (expected_p1_reward, expected_p2_reward) averaged over samples
+        """
+        # Get posterior distribution over opponent's possible cards
+        _, posterior = self.analyze_infoset_and_posterior(infoset, exclude_self_card=True)
+
+        # Determine which player is acting at this infoset
+        acting_player = len(infoset.branch) % 2  # 0 = P1, 1 = P2
+
+        total_p1 = 0.0
+        total_p2 = 0.0
+
+        for _ in range(n_samples):
+            # Sample opponent card from posterior distribution
+            opp_card = np.random.choice(len(posterior), p=posterior)
+
+            # Construct state with correct card assignment based on who is acting
+            if acting_player == 0:
+                # Current player is P1: infoset.card is P1's card, opp_card is P2's
+                state = State(card_p1=infoset.card, card_p2=opp_card, branch=infoset.branch)
+            else:
+                # Current player is P2: infoset.card is P2's card, opp_card is P1's
+                state = State(card_p1=opp_card, card_p2=infoset.card, branch=infoset.branch)
+
+            # Evaluate action with single rollout per sample
+            r1, r2 = self.evaluate_action(state, action, rollout_samples=1)
+            total_p1 += r1
+            total_p2 += r2
+
+        return total_p1 / n_samples, total_p2 / n_samples
 
     def training_epoch(self):
         pass

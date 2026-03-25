@@ -25,6 +25,14 @@ class Infoset:
     def __hash__(self):
         return hash(self.get_values())
 
+    def get_current_player(self) -> int:
+        """
+        Returns the index of the player whose turn it is.
+
+        :return: 0 for Player 1, 1 for Player 2
+        """
+        return len(self.branch) % 2
+
 
 @dataclass
 class State:
@@ -47,6 +55,13 @@ class State:
     def copy(self) -> 'State':
         return replace(self)
 
+    def get_current_player(self) -> int:
+        """
+        Returns the index of the player whose turn it is.
+
+        :return: 0 for Player 1, 1 for Player 2
+        """
+        return len(self.branch) % 2
 
 def to_infoset(key_str: str) -> Infoset:
     """

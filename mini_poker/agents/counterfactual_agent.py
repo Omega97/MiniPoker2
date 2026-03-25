@@ -1,6 +1,6 @@
 import random
 from typing import Dict
-from mini_poker.agents.base_agent import BaseAgent, Infoset
+from mini_poker.agents.base_agent import BaseAgent, Infoset, State
 from mini_poker.game import MiniPoker
 
 
@@ -105,7 +105,8 @@ class CounterfactualAgent(BaseAgent):
         player = len(history) % 2
         action_values = {}
         for action in actions:
-            rewards = self.evaluate_action(history, action, card1, card2, self.rollout_samples)
+            state = State(card1, card2, branch=history)
+            rewards = self.evaluate_action(state, action, self.rollout_samples)
             action_values[action] = rewards[player]
         return action_values
 

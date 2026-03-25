@@ -1,3 +1,4 @@
+import numpy as np
 import random
 from mini_poker.utils import print_colored_status
 from mini_poker.game import MiniPoker, Infoset, State
@@ -8,8 +9,8 @@ def _evaluate_agents_fixed_position(game: MiniPoker, agent_p1, agent_p2, n_games
     Plays two agents against each other for n_games.
     Returns the average reward per game for (Player 1, Player 2).
     """
-    total_reward_p1 = 0
-    total_reward_p2 = 0
+    total_rewards_p1 = []
+    total_rewards_p2 = []
 
     # Iterate through games
     n_combinations = game.deck_size * (game.deck_size - 1)
@@ -36,10 +37,13 @@ def _evaluate_agents_fixed_position(game: MiniPoker, agent_p1, agent_p2, n_games
         # 3. Calculate rewards from the terminal state
         state = State(p1_card, p2_card, branch=history)
         r1, r2 = game.get_reward(state)
-        total_reward_p1 += r1
-        total_reward_p2 += r2
+        total_rewards_p1.append(r1)
+        total_rewards_p2.append(r2)
 
-    return total_reward_p1 / n_games, total_reward_p2 / n_games
+    avg_rewards_p1 = np.mean(total_rewards_p1)
+    avg_rewards_p2 = np.mean(total_rewards_p2)
+
+    return avg_rewards_p1, avg_rewards_p2
 
 
 def evaluate_agents(game: MiniPoker, agent_a, agent_b, n_games=10_000):
@@ -76,3 +80,52 @@ def all_v_all_tournament(game: MiniPoker, agents: list, n_games=100_000, random_
             s = print_colored_status(round(avg_p1, 2), text=f"{avg_p1:+5.2f}")
             print(f" {s}", end=' ')
         print()
+
+
+def quick_evaluate_agents(game: MiniPoker, agent_a, agent_b, n_games=10_000):
+    """
+    Evaluates two agents by sampling random hands and alternating positions
+    every game to eliminate positional bias. Much faster than exhaustive
+    evaluation for large deck sizes.
+
+    Returns the net average reward for (Agent A, Agent B).
+    """
+    total_a, total_b = 0.0, 0.0
+
+    for game_idx in range(n_games):
+        # Sample two distinct cards uniformly at random
+        p1_card, p2_card = random.sample(range(game.deck_size), 2)
+        history = ""
+
+        # Alternate positions every game: even=A@P1, odd=B@P1
+        if game_idx % 2 == 0:
+            agent_p1, agent_p2 = agent_a, agent_b
+            card_p1, card_p2 = p1_card, p2_card
+        else:
+            agent_p1, agent_p2 = agent_b, agent_a
+            card_p1, card_p2 = p2_card, p1_card  # Swap cards too!
+
+        # Play until terminal
+        while history not in game.terminals:
+            acting_player_idx = len(history) % 2
+            current_agent = agent_p1 if acting_player_idx == 0 else agent_p2
+            current_card = card_p1 if acting_player_idx == 0 else card_p2
+
+            infoset = Infoset(current_card, history)
+            action = current_agent.get_action(infoset)
+            history += action
+
+        # Accumulate rewards for each agent (not position!)
+        state = State(p1_card, p2_card, branch=history)  # Original card assignment
+        r1, r2 = game.get_reward(state)
+
+        if game_idx % 2 == 0:
+            # A was P1, B was P2
+            total_a += r1
+            total_b += r2
+        else:
+            # B was P1, A was P2
+            total_b += r1
+            total_a += r2
+
+    return total_a / n_games, total_b / n_games
