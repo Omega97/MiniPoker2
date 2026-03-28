@@ -9,6 +9,9 @@ def _evaluate_agents_fixed_position(game: MiniPoker, agent_p1, agent_p2, n_games
     Plays two agents against each other for n_games.
     Returns the average reward per game for (Player 1, Player 2).
     """
+    for agent in (agent_p1, agent_p2):
+        assert hasattr(agent, "get_action"), f"agent {agent} does not have 'get_action'"
+
     total_rewards_p1 = []
     total_rewards_p2 = []
 

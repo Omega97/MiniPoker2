@@ -15,13 +15,13 @@ def main(game_power=5, deck_size=52):
     ai_agent = load_good_agent(game_power, deck_size)
 
     # === Play with AI ===
-    # human_vs_ai(ai_agent=ai_agent)
+    human_vs_ai(ai_agent=ai_agent)
 
     # === Show Policy ===
     # show_good_policy(agent=ai_agent)
 
     # === Ask AI the best move ===
-    # ask_the_policy("8c", "C", agent=ai_agent, n_posterior_samples=100)
+    # ask_the_policy(33, "D", agent=ai_agent, n_posterior_samples=100)
 
 
 if __name__ == '__main__':

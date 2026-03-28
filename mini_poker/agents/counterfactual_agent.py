@@ -35,10 +35,11 @@ class CounterfactualAgent(BaseAgent):
         self.name += f"_r{self.rollout_samples}"
         self.name += f"_p{self.explore_proba * 100:.0f}"
 
-    def sample_trajectory(self, card1, card2) -> dict:
+    def sample_trajectory(self, state: State) -> dict:
         """Perform random trajectory and returns dict of info."""
-        visited = {}
+        card1, card2 = state.get_cards()
         history = ""
+        visited = {}
         reach_prob = 1.0
         while history not in self.game.terminals:
             player = len(history) % 2
@@ -51,10 +52,11 @@ class CounterfactualAgent(BaseAgent):
             history += action
         return visited
 
-    def sample_random_trajectory(self, card1, card2) -> Dict[Infoset, float]:
+    def sample_random_trajectory(self, state: State) -> Dict[Infoset, float]:
         """Perform random trajectory and return dict of info."""
-        visited = {}
+        card1, card2 = state.get_cards()
         history = ""
+        visited = {}
         reach_prob = 1.0
         while history not in self.game.terminals:
             player = len(history) % 2
@@ -73,13 +75,13 @@ class CounterfactualAgent(BaseAgent):
         bar += f"   St = {self.terminal_entropy():.4f}"
         bar += f"   F = {self.best_card_fold_index():.4f}"
 
-    def explore_trajectory(self, card1, card2):
+    def explore_trajectory(self, state):
         """ Sample a single trajectory through the game tree. """
         explore = (random.random() < self.explore_proba)
         if explore:
-            self.visited_infosets = self.sample_random_trajectory(card1, card2)
+            self.visited_infosets = self.sample_random_trajectory(state)
         else:
-            self.visited_infosets = self.sample_trajectory(card1, card2)
+            self.visited_infosets = self.sample_trajectory(state)
 
     def get_baseline(self, actions, action_values, infoset) -> float:
         # Calculate the baseline (expected value) for the current policy
@@ -110,8 +112,9 @@ class CounterfactualAgent(BaseAgent):
             action_values[action] = rewards[player]
         return action_values
 
-    def update_visited_infosets(self, card1, card2):
+    def update_visited_infosets(self, state):
         """ Update each visited information set. """
+        card1, card2 = state.get_cards()
         for (card, history), reach_prob in self.visited_infosets.items():
             infoset = Infoset(card, history)
             actions = self.game.tree[history]
@@ -126,5 +129,6 @@ class CounterfactualAgent(BaseAgent):
         3. Update logits.
         """
         for iteration, (card1, card2) in enumerate(self.game.iter_uniformly_over_hands(self.epochs)):
-            self.explore_trajectory(card1, card2)
-            self.update_visited_infosets(card1, card2)
+            state = State(card1, card2, branch="")
+            self.explore_trajectory(state)
+            self.update_visited_infosets(state)

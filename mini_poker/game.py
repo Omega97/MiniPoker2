@@ -1,11 +1,20 @@
+# game.py
 """ Mini-Poker AI """
 from itertools import permutations
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace, field
+from typing import List, Tuple, TypeAlias
 import ast
 
 
 LABELS = {2: 'R', 4: 'D', 8: 'T', 16: 'Q', 32: '5', 64: '6', 128: '7'}
 INV_LABELS = {name: n for n, name in LABELS.items()}
+
+
+# ===== Helper dataclasses =====
+
+
+# Define your alias
+Action: TypeAlias = str
 
 
 @dataclass
@@ -24,6 +33,9 @@ class Infoset:
 
     def __hash__(self):
         return hash(self.get_values())
+
+    def copy(self) -> 'Infoset':
+        return replace(self)
 
     def get_current_player(self) -> int:
         """
@@ -63,6 +75,20 @@ class State:
         """
         return len(self.branch) % 2
 
+    def get_cards(self) -> tuple[int, int]:
+        return self.card_p1, self.card_p2
+
+    def get_current_player_card(self):
+        return self.get_cards()[self.get_current_player()]
+
+    def make_action(self, action: Action):
+        self.branch += action
+
+    def get_current_player_infoset(self) -> Infoset:
+        card = self.get_current_player_card()
+        return Infoset(card, self.branch)
+
+
 def to_infoset(key_str: str) -> Infoset:
     """
     Helper to reconstruct Infoset from string key:
@@ -70,6 +96,52 @@ def to_infoset(key_str: str) -> Infoset:
     """
     card, history = ast.literal_eval(key_str)
     return Infoset(card, history)
+
+
+@dataclass
+class Trajectory:
+
+    # State that evolves throughout the trajectory, and eventually becomes the terminal state
+    state: State
+
+    # Records (Infoset, action) for reward tracking
+    infoset_action_pairs: List[Tuple[Infoset, str]] = field(default_factory=list)
+
+    # Records (Infoset, (reach_p0, reach_p1)) snapshots
+    infoset_proba_pairs: List[Tuple[Infoset, Tuple[float, float]]] = field(default_factory=list)
+
+    # Reach probability for each player
+    reach_proba: List[float] = field(default_factory=lambda: [1.0, 1.0])
+
+    def get_state(self) -> State:
+        return self.state
+
+    def get_current_player_infoset(self) -> Infoset:
+        return self.state.get_current_player_infoset()
+
+    @property
+    def total_reach_prob(self) -> float:
+        return self.reach_proba[0] * self.reach_proba[1]
+
+    def perform_action(self, action: Action, action_proba: float):
+        """
+        Records the current state and updates the running reach probability.
+        """
+        infoset = self.get_current_player_infoset()
+        player = infoset.get_current_player()
+
+        # Capture snapshot before update
+        self.infoset_proba_pairs.append((infoset, (self.reach_proba[0], self.reach_proba[1])))
+        self.infoset_action_pairs.append((infoset, action))
+
+        # Update reach probability
+        self.reach_proba[player] *= action_proba
+
+        # Move the game state forward
+        self.state.make_action(action)
+
+
+# ===== Game class =====
 
 
 class MiniPoker:
@@ -193,3 +265,6 @@ class MiniPoker:
         for _ in range(epochs):
             for c1, c2 in permutations(range(self.deck_size), 2):
                 yield c1, c2
+
+    def is_terminal(self, branch: str):
+        return branch in self.terminals

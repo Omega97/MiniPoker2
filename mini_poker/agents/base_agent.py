@@ -1,13 +1,16 @@
+# agents/base_agent.py
 import random
 import math
-from typing import Dict
 import os
 import json
-from pathlib import Path
-from time import time
-import matplotlib.pyplot as plt
 import numpy as np
-from mini_poker.game import MiniPoker, Infoset, to_infoset, State
+import matplotlib.pyplot as plt
+from pathlib import Path
+from typing import Dict, List
+from time import time
+from collections import defaultdict
+from contextlib import contextmanager
+from mini_poker.game import MiniPoker, Infoset, to_infoset, State, Trajectory, Action
 from mini_poker.utils import clip
 from mini_poker.paths import DATA_DIR
 from mini_poker.training.evaluation import evaluate_agents
@@ -23,13 +26,15 @@ class BaseAgent:
     - convert logits -> softmax policy
     - sample actions
     """
-    def __init__(self, game: MiniPoker, logit_bound=10., epochs=None, n_games_compare=10_000):
+    def __init__(self, game: MiniPoker, logit_bound=10.,
+                 epochs=None, n_games_compare=10_000, memory_period=20):
         self.game = game
         self.epochs = epochs
         self.logit_bound = logit_bound
         self.n_games_compare = n_games_compare
         self.deck_size = game.deck_size
         self.game_tree = game.tree
+        self.memory_period = memory_period
         self.logits = {}
         self.policy = {}
         self.name = None
@@ -37,6 +42,10 @@ class BaseAgent:
         self.epoch = None
         self.ev_list = None
         self.times = None
+        self.training_mode = False
+        self.average_reward = defaultdict(lambda: defaultdict(float))
+        self.reward_counts = defaultdict(lambda: defaultdict(int))
+        self.trajectories_cache: List[Trajectory] = []
 
         self._init_policy()
         self._init_name()
@@ -47,14 +56,14 @@ class BaseAgent:
     def __str__(self):
         return self.name
 
-    def get_logit(self, infoset: Infoset, action: str) -> float:
+    def get_logit(self, infoset: Infoset, action: Action) -> float:
         return self.logits[infoset][action]
 
-    def set_logit(self, infoset: Infoset, action: str, logit: float):
+    def set_logit(self, infoset: Infoset, action: Action, logit: float):
         value = clip(logit, -self.logit_bound, self.logit_bound)
         self.logits[infoset][action] = value
 
-    def update_logit(self, infoset: Infoset, action: str, update_step: float):
+    def update_logit(self, infoset: Infoset, action: Action, update_step: float):
         """Add update_step and clip for stability."""
         value = self.get_logit(infoset, action) + update_step
         self.set_logit(infoset, action, value)
@@ -99,7 +108,9 @@ class BaseAgent:
     def get_action(self, infoset: Infoset):
         """Sample action according to current policy."""
         probs = self.get_policy(infoset)
-        return np.random.choice(list(probs.keys()), p=list(probs.values()))
+        actions = list(probs.keys())
+        p = list(probs.values())
+        return np.random.choice(actions, p=p)
 
     def softmax_update(self, infoset: Infoset):
         """Convert logits to policy probabilities."""
@@ -134,21 +145,77 @@ class BaseAgent:
         value_p2 = total_p2 / rollout_samples
         return value_p1, value_p2
 
-    def sample_trajectory(self, card1, card2) -> dict:
-        """Perform random trajectory and returns dict of info."""
-        visited = {}
-        history = ""
-        reach_prob = 1.0
-        while history not in self.game.terminals:
-            player = len(history) % 2
-            card = card1 if player == 0 else card2
-            infoset = Infoset(card, history)
-            visited[infoset] = reach_prob
+    def sample_trajectory_logic(self, state: State) -> Trajectory:
+        """
+        Sample trajectory by using the policy.
+        Modify this method to change sampling technique.
+        WARNING: 'state' will be modified during the trajectory.
+        """
+        trajectory = Trajectory(state)
+        while not self.game.is_terminal(trajectory.state.branch):
+            infoset = trajectory.get_current_player_infoset()
+
+            # Action selection
             probs = self.policy[infoset]
-            action = random.choices(list(probs.keys()), weights=list(probs.values()))[0]
-            reach_prob *= probs[action]
-            history += action
-        return visited
+            actions = list(probs.keys())
+            action = random.choices(actions, weights=list(probs.values()))[0]
+
+            trajectory.perform_action(action, action_proba=probs[action])
+
+        return trajectory
+
+    def sample_trajectory(self, state: State) -> Trajectory:
+        """
+        Perform and return random trajectory.
+        To change sampling technique, modify 'sample_trajectory_logic'.
+        """
+
+        # All trajectories must start at root for proper probability and reward estimation.
+        assert state.branch == "", f'Trajectory must start at root state, not "{state.branch}"'
+
+        # Sample trajectory
+        temp_state = state.copy()
+        trajectory = self.sample_trajectory_logic(temp_state)
+
+        # Add rewards to average
+        if self.training_mode:
+            self._memorize_rewards(trajectory)
+            self.memorize_trajectory(trajectory)
+
+        return trajectory
+
+    def new_reward_weight(self, infoset, action) -> float:
+        """
+        This weight starts big, and slowly converges to 1-gamma.
+        Effectively transitions from *average* to *exponential decay*.
+        """
+        n = self.reward_counts[infoset][action]
+        w_new = (1 + n / self.memory_period) / (1 + n)
+        return w_new
+
+    def update_average_reward(self, infoset: Infoset, action: Action, new_value: float):
+        """Set new average_reward value and update count."""
+        self.average_reward[infoset][action] = new_value
+        self.reward_counts[infoset][action] += 1
+
+    def _memorize_rewards(self, trajectory: Trajectory):
+        """Apply trajectory rewards on self.average_reward (with discount)."""
+        final_rewards = self.game.get_reward(trajectory.state)
+        for infoset, action in trajectory.infoset_action_pairs:
+            current_avg = self.average_reward[infoset][action]
+            player_idx = infoset.get_current_player()
+            w_new = self.new_reward_weight(infoset, action)
+            new_avg = current_avg * (1 - w_new) + final_rewards[player_idx] * w_new
+            self.update_average_reward(infoset, action, new_value=new_avg)
+
+    def memorize_trajectory(self, trajectory: Trajectory):
+        """Add trajectory to the cache."""
+        if self.trajectories_cache is None:
+            self.trajectories_cache = []
+        self.trajectories_cache.append(trajectory)
+
+    def clear_trajectories_cache(self):
+        self.trajectories_cache.clear()
 
     def show_policy(self, logit_mode=False):
         """
@@ -190,9 +257,17 @@ class BaseAgent:
         data = {
             "logits": {str(list(k)): v for k, v in self.logits.items()},
             "policy": {str(list(k)): v for k, v in self.policy.items()},
+            "average_reward": {
+                str(list(infoset)): {action: val for action, val in actions.items()}
+                for infoset, actions in self.average_reward.items()
+            },
+            "reward_counts": {
+                str(list(infoset)): {action: count for action, count in actions.items()}
+                for infoset, actions in self.reward_counts.items()
+            },
             "game_params": {
                 "game_power": self.game.game_power,
-                "deck_size": self.game.deck_size,
+                "deck_size": self.deck_size,
                 "stack": self.game.stack
             }
         }
@@ -215,9 +290,26 @@ class BaseAgent:
         with open(path, 'r') as f:
             data = json.load(f)
 
-        # Using your existing conversion logic
+        # Load logits and policy
         self.logits = {to_infoset(k): v for k, v in data["logits"].items()}
         self.policy = {to_infoset(k): v for k, v in data["policy"].items()}
+
+        # Load average action rewards
+        if "average_reward" in data:
+            self.average_reward = defaultdict(lambda: defaultdict(float))
+            for infoset_str, actions in data["average_reward"].items():
+                infoset = to_infoset(infoset_str)
+                for action, value in actions.items():
+                    self.average_reward[infoset][action] = value
+
+        # Load visit counts
+        if "reward_counts" in data:
+            self.reward_counts = defaultdict(lambda: defaultdict(int))
+            for infoset_str, actions in data["reward_counts"].items():
+                infoset = to_infoset(infoset_str)
+                for action, count in actions.items():
+                    self.reward_counts[infoset][action] = count
+
         print(f"\nAgent {self} loaded from {path}")
 
     def entropy(self) -> float:
@@ -281,8 +373,8 @@ class BaseAgent:
     def best_card_fold_index(self) -> float:
         """
         Returns a metric where:
-        - 1.0: Agent is folding the best card at the same rate as a random agent.
         - 0.0: Agent never folds the best card.
+        - 1.0: Agent is folding the best card at the same rate as a random agent.
         - > 1.0: Agent is actively 'punishing' the best card (worse than random).
         """
         if not self.policy:
@@ -367,23 +459,23 @@ class BaseAgent:
 
         # Epochs
         if self.epoch is not None:
-            bar += f"{self.epoch+1:3})"
-            bar += f"  {(self.epoch+1) / self.epochs:7.2%}"
+            bar += f"{self.epoch+1:3})  {(self.epoch+1) / self.epochs:7.2%}"
         else:
-            bar += f"{0:3})"
-            bar += f"  {0:7.2%}"
+            bar += f"{0:3})  {0:7.2%}"
 
         # EVs
         if self.ev_list is not None and len(self.ev_list):
-            ev = self.ev_list[-1]
+            n = max(1, len(self.ev_list) // 20)  # upper 5%
+            ev = np.mean(self.ev_list[-n:])
             bar += print_colored_status(ev, text=f"  {ev:+6.2f}", red=COLORS['white'])
         else:
             bar += f"    --- "
 
         # Time
-        if self.times is not None and len(self.times) >= 2:
-            time_elapsed = self.times[-1] - self.times[-2]
-            speed = 1 / (time_elapsed + epsilon)
+        n_times = 3
+        if self.times is not None and len(self.times) >= 1 + n_times:
+            time_elapsed = self.times[-1] - self.times[-1-n_times]
+            speed = n_times / (time_elapsed + epsilon)
             epochs_left = self.epochs - self.epoch
             time_left = epochs_left / speed
             if time_left > 60:
@@ -392,6 +484,9 @@ class BaseAgent:
                 bar += f"   eta: {time_left:3.0f} s  "
         else:
             bar += f"   eta: ???    "
+
+        # Exploration
+        bar += f"   expl: {len(self.reward_counts) / len(self.policy):7.2%}"
 
         return bar
 
@@ -491,7 +586,7 @@ class BaseAgent:
 
         return action_probs, posterior
 
-    def bayesian_evaluate_action(self, infoset: Infoset, action: str, n_samples: int = 100) -> tuple:
+    def bayesian_evaluate_action(self, infoset: Infoset, action: Action, n_samples: int = 100) -> tuple:
         """
         Evaluate an action using Bayesian inference over opponent's possible cards.
 
@@ -533,6 +628,33 @@ class BaseAgent:
             total_p2 += r2
 
         return total_p1 / n_samples, total_p2 / n_samples
+
+    @contextmanager
+    def train_context(self):
+        """
+        Context manager to safely toggle training mode.
+
+        Usage:
+            with agent.train_context():
+                agent.sample_trajectory(state)
+        """
+        original_mode = self.training_mode
+        self.training_mode = True
+        try:
+            yield
+        finally:
+            self.training_mode = original_mode
+
+    def show_average_reward(self) -> str:
+        out = f"{len(self.average_reward)} infosets\n"
+        for infoset, d in self.average_reward.items():
+            out += f"{infoset}\n"
+            for a, v in d.items():
+                if v == 0:
+                    out += f"  {a}  --\n"
+                else:
+                    out += f"  {a}  {v:+7.2f}    ({self.reward_counts[infoset][a]})\n"
+        return out
 
     def training_epoch(self):
         pass

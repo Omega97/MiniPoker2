@@ -1,5 +1,6 @@
 # agents\cached_counterfactual_agent.py
 import random
+import math
 from itertools import permutations
 from mini_poker.agents.base_agent import BaseAgent, Infoset, State
 from mini_poker.game import MiniPoker
@@ -29,7 +30,6 @@ class CachedCounterfactualAgent(BaseAgent):
                  memory_period=50,
                  ):
         """
-
         :param game:
         :param logit_bound:
         :param epochs:
@@ -90,7 +90,6 @@ class CachedCounterfactualAgent(BaseAgent):
             final_state = State(card1, card2, history)
             self._memorize_rewards(path, final_state)
 
-
     def get_progress_bar(self, epsilon=1e-6):
 
         # Base bar + entropy + fold best card proba
@@ -101,8 +100,8 @@ class CachedCounterfactualAgent(BaseAgent):
 
         # Cache statistics
         total_visits = sum(sum(actions.values()) for actions in self.reward_counts.values())
-        bar += f"   Cache = {len(self.average_reward)}"
-        bar += f"   Visits = {total_visits}"
+        bar += f"   Explored: {len(self.average_reward) / len(self.policy):6.2%}"
+        bar += f"   Visits: {total_visits}"
 
         return bar
 
@@ -118,15 +117,16 @@ class CachedCounterfactualAgent(BaseAgent):
 
         return action_values
 
-    def get_baseline(self, actions, action_values, infoset) -> float:
+    def _get_baseline(self, actions, action_values, infoset) -> float:
         """Calculate the baseline (expected value) for the current policy."""
         probs = self.get_policy(infoset)
         baseline = sum(probs[a] * action_values[a] for a in actions)
+        # baseline = sum(action_values[a] for a in actions) / len(actions)
         return baseline
 
     def _update_rule(self, actions, action_values, infoset):
         """Direct Update: Update logits based on advantage."""
-        baseline = self.get_baseline(actions, action_values, infoset)
+        baseline = self._get_baseline(actions, action_values, infoset)
 
         for action in actions:
             # Advantage (NOT weighted by reach probability)
@@ -161,6 +161,39 @@ class CachedCounterfactualAgent(BaseAgent):
             for card1, card2 in permutations(range(self.deck_size), 2):
                 state = State(card1, card2, branch="")
                 self.sample_trajectory(state)
+
+        # Perform all updates at once
+        self.update_visited_infosets()
+
+
+class NewUpdateRuleAgent(CachedCounterfactualAgent):
+    def _update_rule(self, actions, action_values, infoset, k=2.):
+        """Direct Update: Update logits based on advantage."""
+        max_value = max(action_values.values())
+        cutoff = max_value - k
+
+        for action in actions:
+            diff = max(0, action_values[action] - cutoff)
+            new_logit = diff / k * self.logit_bound * math.tanh(self.epochs/100+1)
+            self.set_logit(infoset, action, new_logit)
+
+        # Recalculate probabilities for this infoset
+        self.softmax_update(infoset)
+
+    def training_epoch(self, n_times=50):
+        """
+        Iterates over every initial state to cancel noise.
+        The update of the logits happens at the end of the sweep.
+        The update of the rewards happens mid-sweep.
+        """
+        # Training mode ON
+        with self.train_context():
+
+            # Iterate over possible initial states
+            for _ in range(n_times):
+                for card1, card2 in permutations(range(self.deck_size), 2):
+                    state = State(card1, card2, branch="")
+                    self.sample_trajectory(state)
 
         # Perform all updates at once
         self.update_visited_infosets()

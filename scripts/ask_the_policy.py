@@ -65,7 +65,7 @@ def main():
 
     # Ask the policy
     # ask_the_policy(21, "CT", agent=agent)
-    ask_the_policy(29, "RR", agent=agent, n_posterior_samples=1000)
+    ask_the_policy(28, "CRT", agent=agent, n_posterior_samples=1000)
 
 
 if __name__ == '__main__':
