@@ -47,7 +47,7 @@ def ask_the_policy(my_hand: str | int, branch: str, agent,
         s_ev = print_colored_status(ev, text=f"{ev:+.2f}")
         print(f"  {action}: {prob:7.1%}     EV = {s_ev}")
 
-    print(f"\n→ RANDOM ACTION: {recommended_action}")
+    print(f'\n→ RANDOM ACTION: "{recommended_action}"')
 
 
 def main(game_power=5, deck_size=52):
@@ -55,9 +55,10 @@ def main(game_power=5, deck_size=52):
     ai_agent = load_good_agent(game_power, deck_size)
 
     # --- Ask agent ---
-    ask_the_policy(my_hand=42,
-                   branch="RD",
-                   agent=ai_agent)
+    ask_the_policy(
+        my_hand=45,
+        branch="RR",
+        agent=ai_agent)
 
 
 if __name__ == '__main__':
