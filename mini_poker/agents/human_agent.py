@@ -67,7 +67,7 @@ def play_vs_agent(game: MiniPoker, players: list) -> tuple[tuple[float, float], 
 
         # Pause for readability if AI is playing
         if not isinstance(current_agent, HumanAgent):
-            input("Press Enter to see result...")
+            input("")
 
     # 3. Wrap up results
     state = State(p1_card, p2_card, branch=history)

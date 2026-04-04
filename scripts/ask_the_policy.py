@@ -1,83 +1,85 @@
-import numpy as np
-from mini_poker.utils import card_to_num, clip_proba
-from mini_poker.agents.base_agent import Infoset
-from mini_poker.utils import print_colored_status
+from mini_poker.ask_policy import ask_the_policy
+from mini_poker.utils import card_to_num
 from scripts.load_good_agent import load_good_agent
 
 
-def ask_the_policy(my_hand: str | int, branch: str, agent,
-                   length=30, p_threshold=1e-3):
-    """
-    Ask the policy what to do, with Bayesian EV estimation.
-
-    :param my_hand: "Ah", "Td", "7c", ..., "2s" or 0, 1, ..., 51
-    :param branch: non-terminal game node ("", "C", "CR", "RR", "D", ...)
-    :param agent: trained BaseAgent instance
-    :param length: width of posterior likelihood bar chart
-    :param p_threshold: probability threshold for clipping low-prob actions
-    :return: None (prints analysis to console)
-    """
-    # Convert hand to integer index
-    my_hand_int = card_to_num(*my_hand) if isinstance(my_hand, str) else my_hand
-    infoset = Infoset(my_hand_int, branch)
-
-    # Compute action probabilities and posterior over opponent's card
-    probs, post = agent.analyze_infoset_and_posterior(infoset, exclude_self_card=True)
-
-    # Display opponent hand likelihood (relative scale)
-    max_p = max(post) if np.any(post) else 1.0
-    print(f"\nOpponent Hand Likelihood (Relative scale, max={max_p:.1%}):")
-    for c, p in enumerate(post):
-        bar_len = int((p / max_p) * length) if max_p > 0 else 0
-        bar = '=' * bar_len
-        print(f"  Card {c:2}  |{p:6.1%} | {bar}")
-
-    # Prepare action probabilities with clipping
-    actions = list(probs.keys())
-    probabilities = np.array(list(probs.values()))
-    probabilities = clip_proba(probabilities, threshold=p_threshold)
-    recommended_action = np.random.choice(actions, p=probabilities)
-
-    print(f"\nHand: {my_hand_int}")
-    print(f"\nMy Action Probs at history '{branch}':")
-
-    for action in actions:
-        prob = agent.get_policy(infoset)[action]
-        ev = agent.get_average_rewards(infoset)[action]
-        s_ev = print_colored_status(ev, text=f"{ev:+.2f}")
-        print(f"  {action}: {prob:7.1%}     EV = {s_ev}")
-
-    print(f"\n→ RANDOM ACTION: {recommended_action}")
+def get_input_normalized(prompt):
+    """Clean up user input for cards and branches."""
+    return input(prompt).strip()
 
 
-def main():
+def run_interactive_oracle():
+    print("=== MINI-POKER AI ORACLE ===")
+    print("Loading agent (Game Power: 5, Deck: 52)...")
 
-    # === Load agent ===
-    agent = load_good_agent(game_power=5, deck_size=52)
+    try:
+        agent = load_good_agent(game_power=5, deck_size=52)
+    except Exception as e:
+        print(f"Error loading agent: {e}")
+        return
 
-    # === Ask the policy ===
-    # ask_the_policy(my_hand=2, branch="DD", agent=agent)
-    # ask_the_policy(my_hand=9, branch="DD", agent=agent)
-    # ask_the_policy(my_hand=10, branch="CR", agent=agent)
-    # ask_the_policy(my_hand=12, branch="RR", agent=agent)
-    # ask_the_policy(my_hand=14, branch="CD", agent=agent)
-    # ask_the_policy(my_hand=17, branch="CD", agent=agent)
-    # ask_the_policy(my_hand=20, branch="RD", agent=agent)
-    # ask_the_policy(my_hand=25, branch="CR", agent=agent)
-    # ask_the_policy(my_hand=26, branch="CD", agent=agent)
-    # ask_the_policy(my_hand=29, branch="R", agent=agent)
-    # ask_the_policy(my_hand=30, branch="R", agent=agent)
-    # ask_the_policy(my_hand=34, branch="RD", agent=agent)
-    # ask_the_policy(my_hand=35, branch="CRA", agent=agent)
-    # ask_the_policy(my_hand=38, branch="CRR", agent=agent)
-    # ask_the_policy(my_hand=41, branch="RR", agent=agent)
-    # ask_the_policy(my_hand=42, branch="CT", agent=agent)
-    # ask_the_policy(my_hand=43, branch="RR", agent=agent)
-    # ask_the_policy(my_hand=46, branch="RD", agent=agent)
-    # ask_the_policy(my_hand=48, branch="RA", agent=agent)
-    # ask_the_policy(my_hand=50, branch="CRR", agent=agent)
-    ask_the_policy(my_hand=51, branch="RR", agent=agent)
+    print("\nInstructions:")
+    print("- Enter hand as a number (0-51) or string (e.g., 'Ah', '10s').")
+    print("- Enter branch as a sequence of actions (e.g., 'CR', 'C').")
+    print("- For root state, use '', '-', or 'root'.")
+    print("- To quit: Press Enter twice when asked for a branch.")
+
+    last_was_empty = False
+
+    while True:
+        # 1. Get Hand
+        hand_input = get_input_normalized("\nEnter your hand: ")
+        if not hand_input:
+            print("Hand cannot be empty.")
+            continue
+
+        # 2. Get Branch
+        branch_input = get_input_normalized(f"Enter branch for hand {hand_input}: ")
+
+        # Check for exit condition (Double empty branch)
+        if branch_input == "":
+            if last_was_empty:
+                print("Exiting Oracle. Good luck at the table!")
+                break
+            last_was_empty = True
+        else:
+            last_was_empty = False
+
+        # Normalize root state aliases
+        if branch_input.lower() in ["", "-", "root"]:
+            branch_processed = ""
+        else:
+            branch_processed = branch_input.upper()
+
+        # 3. Validation and Execution
+        try:
+            # Handle string vs int conversion for hand
+            if hand_input.isdigit():
+                final_hand = int(hand_input)
+            else:
+                # Assuming card_to_num handles ranks like 'Ah' -> 'A', 'h'
+                # and you might need to slice the string if your utils expect separate args
+                if len(hand_input) == 2:
+                    final_hand = card_to_num(hand_input[0], hand_input[1])
+                elif len(hand_input) == 3:  # For '10s'
+                    final_hand = card_to_num(hand_input[:2], hand_input[2])
+                else:
+                    final_hand = hand_input
+
+            print(f"\n--- Analysis for {hand_input} at '{branch_processed or 'root'}' ---")
+
+            # Call the analysis function
+            ask_the_policy(
+                my_hand=final_hand,
+                branch=branch_processed,
+                agent=agent
+            )
+
+        except KeyError:
+            print(f"Error: Branch '{branch_input}' is not a valid node in the game tree.")
+        except Exception as e:
+            print(f"An error occurred: {e}")
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    run_interactive_oracle()

@@ -6,7 +6,7 @@ Ranks: 2 3 4 5 6 7 8 9 T J Q K A
 Moves: F C R D T A
 """
 from scripts.load_good_agent import load_good_agent
-from scripts.human_vs_ai import PlayVsAI
+from scripts.play_with_ai import PlayVsAI
 from scripts.show_good_policy import show_good_policy
 from scripts.ask_the_policy import ask_the_policy
 
