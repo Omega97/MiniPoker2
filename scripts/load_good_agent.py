@@ -2,7 +2,6 @@ from mini_poker.game import MiniPoker
 from mini_poker.training.trainer import AgentTrainer
 from mini_poker.agents.cem2_agent import CounterfactualEMAgent
 from mini_poker.agents.crm_agent import CRMAgent
-from mini_poker.agents.decisive_agent import DecisiveAgent
 from mini_poker.agents.greedy_agent import GreedyAgent
 
 
@@ -55,19 +54,6 @@ def load_good_crm_agent_5_52():
     return agent
 
 
-def load_good_decisive_agent_5_52():
-    game = MiniPoker(5, 52)
-
-    agent_crm = CRMAgent(game, epochs=5000, explore_proba=0.1)
-    trainer = AgentTrainer(agent_crm)
-    trainer.run()
-
-    agent = DecisiveAgent(game, epsilon=1e-3)
-    agent.inherit_from(agent_crm)
-
-    return agent
-
-
 def load_greedy_agent(n_visits=10, k_greed=5.):
     game = MiniPoker(5, 52)
 
@@ -86,8 +72,7 @@ def load_good_agent(game_power, deck_size):
 
     elif (game_power, deck_size) == (5, 52):
         # return load_good_expectation_maximization_agent_5_52()
-        # return load_good_decisive_agent_5_52()
-        return load_good_crm_agent_5_52()
         # return load_greedy_agent()
+        return load_good_crm_agent_5_52()
 
     raise NotImplementedError
