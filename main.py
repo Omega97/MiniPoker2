@@ -6,7 +6,7 @@ Ranks: 2 3 4 5 6 7 8 9 T J Q K A
 Moves: F C R D T A
 """
 from scripts.load_good_agent import load_good_agent
-from scripts.human_vs_ai import human_vs_ai
+from scripts.human_vs_ai import PlayVsAI
 from scripts.show_good_policy import show_good_policy
 from scripts.ask_the_policy import ask_the_policy
 
@@ -15,13 +15,14 @@ def main(game_power=5, deck_size=52):
     ai_agent = load_good_agent(game_power, deck_size)
 
     # === Play with AI ===
-    human_vs_ai(ai_agent=ai_agent)
+    PlayVsAI(ai_agent=ai_agent).play()
+    # PlayVsAI(ai_agent=ai_agent).display_history()
 
     # === Show Policy ===
     # show_good_policy(agent=ai_agent)
 
     # === Ask AI the best move ===
-    # ask_the_policy(33, "D", agent=ai_agent, n_posterior_samples=100)
+    # ask_the_policy(33, "CRR", agent=ai_agent)
 
 
 if __name__ == '__main__':

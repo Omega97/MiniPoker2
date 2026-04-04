@@ -1,61 +1,58 @@
-import random
-from mini_poker.game import Infoset, State
-from mini_poker.agents.cem2_agent import CounterfactualEMAgent
-import numpy as np
+import math
+from mini_poker.agents.base_agent import BaseAgent
 
 
-class GreedyAgent(CounterfactualEMAgent):
+class GreedyAgent(BaseAgent):
+
     def __init__(self,
-                 game,
-                 logit_bound=10.,
-                 epochs=100,
-                 lr=0.1,
-                 rollout_samples=1,
-                 explore_proba=1.,
-                 max_sigma=1.0,
-                 n_games_compare=10_000,
-                 n_samples=10,
-                 p_exploit=0.1,
-                 ):
+                 trained_agent,
+                 n_visits=100,
+                 k_greed=2.0,
+                 logit_bound=10.0):
         """
-        GreedyAgent always plays the action with highest expected value.
-        """
-        self.n_samples = n_samples
-        super().__init__(game,
-                         logit_bound=logit_bound,
-                         epochs=epochs,
-                         lr=lr,
-                         rollout_samples=rollout_samples,
-                         explore_proba=explore_proba,
-                         max_sigma=max_sigma,
-                         n_games_compare=n_games_compare,
-                         )
+        An agent that transforms a trained policy into a greedy-biased policy.
 
-    def rollout(self, state: State):
-        """Returns (p1_reward, p2_reward)"""
-        while state.branch not in self.game.terminals:
-            player = len(state.branch) % 2
-            card = state.card_p1 if player == 0 else state.card_p2
-            infoset = Infoset(card, state.branch)
-            action = self.base_get_action(infoset)
-            state.branch += action
-        return self.game.get_reward(state)
-
-    def base_get_action(self, infoset: Infoset) -> str:
-        """Necessary to avoid recursion."""
-        return super().get_action(infoset)
-
-    def get_action(self, infoset: Infoset) -> str:
+        :param trained_agent: An instance of CRMAgent or BaseAgent with training data.
+        :param n_visits: Threshold for self.reward_counts to apply the boost.
+        :param k_greed: The constant added to the logit of the best-EV action.
         """
-        Return the action with highest expected value.
-        Samples opponent cards uniformly (avoids recursion through get_policy).
+        # Inherit the game and basic parameters from the trained agent
+        super().__init__(trained_agent.game, logit_bound=logit_bound)
+
+        self.n_visits = n_visits
+        self.k_greed = k_greed
+
+        # 1. Inherit existing knowledge
+        self.policy = trained_agent.policy.copy()
+        self.average_reward = trained_agent.average_reward
+        self.reward_counts = trained_agent.reward_counts
+
+        # 2. Perform the global policy transformation
+        self._compute_greedy_policy()
+
+    def _compute_greedy_policy(self):
         """
-        if random.random() < self.explore_proba:
-            # Get available actions from raw policy dict (NO get_policy() call!)
-            probs = self.policy[infoset]
-            actions = list(probs.keys())
-            player = infoset.get_current_player()
-            values = [self.bayesian_evaluate_action(infoset, a, n_samples=self.n_samples)[player] for a in actions]
-            return actions[np.argmax(values)]
-        else:
-            return super().get_action(infoset)
+        Iterates through all infosets to apply the EV-boost logic all at once.
+        """
+        p_min = math.exp(-self.logit_bound)
+        for infoset in list(self.logits.keys()):
+            # A) Init logits from policy
+            self.logits[infoset] = {a: math.log(max(p, p_min)) for a, p in self.get_policy(infoset).items()}
+            self.center_logits(infoset)
+
+            # B) Check if this infoset meets the visit threshold
+            # Summing visits across all actions in this infoset
+            total_visits = sum(self.reward_counts[infoset].values())
+
+            if total_visits >= self.n_visits:
+                # Find the action with the highest average reward
+                avg_rewards = self.average_reward[infoset]
+                if avg_rewards:
+                    best_action = max(avg_rewards, key=avg_rewards.get)
+
+                    # C) Add k_greed to the highest-EV move
+                    current_logit = self.get_logit(infoset, best_action)
+                    self.set_logit(infoset, best_action, current_logit + self.k_greed)
+
+            # D) Re-compute probabilities using softmax
+            self.softmax_update(infoset)

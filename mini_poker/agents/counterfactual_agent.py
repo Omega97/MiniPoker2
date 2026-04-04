@@ -15,7 +15,6 @@ class CounterfactualAgent(BaseAgent):
                  game: MiniPoker,
                  logit_bound=10.,
                  epochs=1_000,
-                 n_games_compare=10_000,
                  lr=0.01,
                  rollout_samples=1,
                  explore_proba=0.01,
@@ -25,7 +24,7 @@ class CounterfactualAgent(BaseAgent):
         self.rollout_samples = rollout_samples
         self.explore_proba = explore_proba
         self.visited_infosets = None
-        super().__init__(game, logit_bound, epochs=epochs, n_games_compare=n_games_compare)
+        super().__init__(game, logit_bound, epochs=epochs)
 
     def _init_name(self):
         self.name = f"{type(self).__name__}({self.game.game_power},{self.game.deck_size})"
@@ -35,7 +34,7 @@ class CounterfactualAgent(BaseAgent):
         self.name += f"_r{self.rollout_samples}"
         self.name += f"_p{self.explore_proba * 100:.0f}"
 
-    def sample_trajectory(self, state: State) -> dict:
+    def sample_trajectory_from_root(self, state: State) -> dict:
         """Perform random trajectory and returns dict of info."""
         card1, card2 = state.get_cards()
         history = ""
@@ -81,7 +80,7 @@ class CounterfactualAgent(BaseAgent):
         if explore:
             self.visited_infosets = self.sample_random_trajectory(state)
         else:
-            self.visited_infosets = self.sample_trajectory(state)
+            self.visited_infosets = self.sample_trajectory_from_root(state)
 
     def get_baseline(self, actions, action_values, infoset) -> float:
         # Calculate the baseline (expected value) for the current policy

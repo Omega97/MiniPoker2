@@ -33,7 +33,7 @@ def generate_game_records(
     records = []
     games_played = 0
 
-    for p1_card, p2_card in game.iter_uniformly_over_hands(epochs=1):
+    for p1_card, p2_card in game.iter_uniformly_over_hands(n_sweeps=1):
 
         # Play the game
         history = ""

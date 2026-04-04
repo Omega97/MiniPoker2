@@ -12,7 +12,7 @@ def load_good_expectation_maximization_agent_4_52():
 
     # Load agent
     agent = CounterfactualEMAgent(game, epochs=100, lr=0.01, rollout_samples=1,
-                                  explore_proba=1., max_sigma=1.)
+                                  explore_proba=1., kernel_size=1.)
     trainer = AgentTrainer(agent)
     trainer.run()
     return agent
@@ -35,9 +35,9 @@ def load_good_expectation_maximization_agent_5_52():
 
     # Load agent
     # agent = CounterfactualEMAgent(game, epochs=300, lr=0.005, rollout_samples=10,
-    #                               explore_proba=1., max_sigma=2.)
+    #                               explore_proba=1., kernel_size=2.)
     agent = CounterfactualEMAgent(game, epochs=500, lr=0.003, rollout_samples=3,
-                                  explore_proba=1., max_sigma=0.)
+                                  explore_proba=1., kernel_size=0.)
 
     trainer = AgentTrainer(agent)
     trainer.run()
@@ -49,7 +49,7 @@ def load_good_crm_agent_5_52():
     game = MiniPoker(5, 52)
 
     # Load agent
-    agent = CRMAgent(game, epochs=500, explore_proba=0.1)
+    agent = CRMAgent(game, epochs=20_000, explore_proba=0.01)
     trainer = AgentTrainer(agent)
     trainer.run()
     return agent
@@ -68,20 +68,16 @@ def load_good_decisive_agent_5_52():
     return agent
 
 
-def load_greedy_agent(n_samples=50, explore_proba=0.33):
+def load_greedy_agent(n_visits=10, k_greed=5.):
     game = MiniPoker(5, 52)
 
-    crm_agent = CRMAgent(game, epochs=5000, explore_proba=0.1)
-    trainer = AgentTrainer(crm_agent)
-    trainer.run()
+    balanced_agent = CRMAgent(game, epochs=20_000, explore_proba=0.01)
+    greedy_agent = GreedyAgent(balanced_agent, n_visits=n_visits, k_greed=k_greed)
 
-    greedy = GreedyAgent(game, n_samples=n_samples, explore_proba=explore_proba)
-    greedy.inherit_from(crm_agent)
-
-    return greedy
+    return greedy_agent
 
 
-def load_good_agent(game_power=4, deck_size=52):
+def load_good_agent(game_power, deck_size):
     """Agent with proven performance."""
 
     if (game_power, deck_size) == (4, 52):
@@ -90,8 +86,8 @@ def load_good_agent(game_power=4, deck_size=52):
 
     elif (game_power, deck_size) == (5, 52):
         # return load_good_expectation_maximization_agent_5_52()
-        # return load_good_crm_agent_5_52()
         # return load_good_decisive_agent_5_52()
-        return load_greedy_agent()
+        return load_good_crm_agent_5_52()
+        # return load_greedy_agent()
 
-    return
+    raise NotImplementedError

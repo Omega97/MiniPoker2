@@ -9,7 +9,7 @@ class AgentTrainer:
     loading, training, saving, and policy display.
     """
     def __init__(self, agent, random_seed: int = 0, show_policy: bool = False,
-                 data_dir: Path = None, inherit_from = None, force_training=False):
+                 data_dir: Path = None, inherit_from = None):
         """
         Initialize the trainer.
 
@@ -19,7 +19,6 @@ class AgentTrainer:
             show_policy: Whether to print the policy after training/loading.
             data_dir: Directory for saving/loading models. Defaults to global DATA_DIR.
             inherit_from: agent from whom to copy logits and policy.
-            force_training: force training (no loading)
         """
         self.agent = agent
         self.random_seed = random_seed
@@ -27,9 +26,8 @@ class AgentTrainer:
         self.data_dir = data_dir or DATA_DIR  # Fallback to global if not provided
         self.filepath = self.data_dir / f"{agent}.json"
         self.inherit_from = inherit_from
-        self.force_training = force_training
 
-    def run(self):
+    def run(self, force_training=False):
         """
         Execute the training workflow: try load, else train, then save.
 
@@ -37,7 +35,7 @@ class AgentTrainer:
             The agent object.
         """
         # Loading
-        if not self.force_training:
+        if not force_training:
             if self._try_load():
                 # Show Policy
                 if self.show_policy:

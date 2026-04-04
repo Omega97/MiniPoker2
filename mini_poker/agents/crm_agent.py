@@ -1,6 +1,5 @@
 # agents/crm_agent.py
 import numpy as np
-from itertools import permutations
 import random
 import json
 import os
@@ -17,37 +16,26 @@ from mini_poker.game import MiniPoker, State
 class CRMAgent(BaseAgent):
     """
     Counterfactual Regret Minimization Agent (CFR).
-
-    Key fixes implemented:
-    1. Track BOTH players' reach probabilities separately
-    2. Use OPPONENT'S reach probability for counterfactual updates
-    3. Only update regrets for current player's infosets
-    4. Use time-averaged policy for decision making
-    5. Add explicit exploration for better early training
-    6. CFR+ linear weighting for faster convergence
     """
     def __init__(self,
                  game: MiniPoker,
                  logit_bound=10.,
                  epochs=1_000,
-                 n_games_compare=10_000,
                  explore_proba=0.1,
+                 memory_period=100,
                  ):
         """
-
         :param game: Game instance
         :param logit_bound: logits are limited between - and + logit_bound
         :param epochs: number of training epochs
-        :param n_games_compare: number of games per epoch to evaluate agent
         :param explore_proba: random move proba during training
         """
         self.epochs = epochs
-        self.explore_proba = explore_proba
         self.cumulative_regrets = {}
         self.cumulative_policy = {}
         self.iteration_count = 0
 
-        super().__init__(game, logit_bound, epochs=epochs, n_games_compare=n_games_compare)
+        super().__init__(game, logit_bound, explore_proba=explore_proba, epochs=epochs, memory_period=memory_period)
 
     def _init_name(self):
         self.name = f"{type(self).__name__}({self.game.game_power},{self.game.deck_size})"
@@ -215,15 +203,15 @@ class CRMAgent(BaseAgent):
         This is the expected value assuming we reach this infoset and take this action,
         then continue with current policy.
         """
-        temp_state = state.copy()
-        temp_state.make_action(action)
+        temp_state = state
+        temp_state = temp_state.perform_action(action)
 
         # Complete the game with current policy
         while not self.game.is_terminal(temp_state.branch):
             curr_infoset = temp_state.get_current_player_infoset()
             probs = self.get_policy(curr_infoset)
             next_action = random.choices(list(probs.keys()), weights=list(probs.values()))[0]
-            temp_state.make_action(next_action)
+            temp_state = temp_state.perform_action(next_action)
 
         rewards = self.game.get_reward(temp_state)
 
@@ -241,6 +229,7 @@ class CRMAgent(BaseAgent):
         """
         Update cumulative regrets for current player's infosets visited during the trajectory.
         """
+
         # We need the cards from the terminal state to reconstruct the game at each node
         card_p1 = trajectory.state.card_p1
         card_p2 = trajectory.state.card_p2
@@ -294,23 +283,27 @@ class CRMAgent(BaseAgent):
             for action in actions:
                 self.cumulative_policy[infoset][action] += player_reach * new_policy[action] * weight
 
+    def _exploration(self, card1, card2):
+        """
+        Sample trajectory
+        """
+        state = State(card1, card2, branch="")
+        with self.train_context():
+            trajectory = self.sample_trajectory_from_root(state)
+        return trajectory
+
     def training_epoch(self):
         """
         One epoch of CFR training.
 
         Iterate through all card combinations and update regrets.
         """
-        self.iteration_count += 1
 
-        for card1, card2 in permutations(range(self.deck_size), 2):
-
-            # Sample trajectory
-            state = State(card1, card2, branch="")
-            with self.train_context():
-                trajectory = self.sample_trajectory(state)
-
-            # Update regrets on single trajectory
+        # Sample trajectories and update regrets
+        for card1, card2 in self.game.iter_uniformly_over_hands():
+            trajectory = self._exploration(card1, card2)
             self.update_regrets(trajectory)
+            self.iteration_count += 1
 
         # Clear list of trajectories
         self.clear_trajectories_cache()

@@ -3,7 +3,7 @@ import random
 import math
 from itertools import permutations
 from mini_poker.agents.base_agent import BaseAgent, Infoset, State
-from mini_poker.game import MiniPoker
+from mini_poker.game import MiniPoker, Trajectory
 
 
 class CachedCounterfactualAgent(BaseAgent):
@@ -24,7 +24,6 @@ class CachedCounterfactualAgent(BaseAgent):
                  game: MiniPoker,
                  logit_bound=10.,
                  epochs=1_000,
-                 n_games_compare=10_000,
                  lr=0.01,
                  explore_proba=0.01,
                  memory_period=50,
@@ -33,20 +32,18 @@ class CachedCounterfactualAgent(BaseAgent):
         :param game:
         :param logit_bound:
         :param epochs:
-        :param n_games_compare:
         :param lr:
         :param explore_proba:
         :param memory_period: for how many updates we retain most of the reward info.
         """
         self.epochs = epochs
         self.lr = lr
-        self.explore_proba = explore_proba
         self.visited_infosets = dict()
 
         super().__init__(game,
                          logit_bound,
                          epochs=epochs,
-                         n_games_compare=n_games_compare,
+                         explore_proba=explore_proba,
                          memory_period=memory_period)
 
     def _init_name(self):
@@ -56,39 +53,35 @@ class CachedCounterfactualAgent(BaseAgent):
         self.name += f"_e{self.epochs}"
         self.name += f"_p{self.explore_proba * 100:.0f}"
 
-    def sample_trajectory(self, state: State):
-        """Perform random trajectory with epsilon-greedy exploration.
+    def get_exploration_weights(self, infoset) -> dict:
+        actions = list(self.policy[infoset].keys())
+        c = 1.0 / len(actions)
+        return {a: c for a in actions}
 
-        With probability explore_proba: take a random action (uniform)
-        With probability 1-explore_proba: take an action from current policy
+    def sample_trajectory_logic(self, state) -> Trajectory:
         """
-        card1, card2 = state.get_cards()
-        history = ""
-        reach_prob = 1.0
+        Sample trajectory using reward-guided exploration.
+        During early training, explore more; later, exploit learned policy.
+        """
+        trajectory = Trajectory(state)
 
-        path = []
+        while not self.game.is_terminal(trajectory.state.branch):
+            infoset = trajectory.get_current_player_infoset()
+            actions = list(self.policy[infoset].keys())
 
-        while history not in self.game.terminals:
-            player = len(history) % 2
-            card = card1 if player == 0 else card2
-            infoset = Infoset(card, history)
-            self.visited_infosets[infoset] = reach_prob
-            probs = self.policy[infoset]
-            actions = list(probs.keys())
-
-            # Epsilon-greedy action selection
+            # Decide whether to explore or exploit
             if random.random() < self.explore_proba:
-                action = random.choice(actions)
+                probs = self.get_exploration_weights(infoset)
             else:
-                action = random.choices(actions, weights=list(probs.values()))[0]
+                probs = self.policy[infoset]
 
-            reach_prob *= probs[action]
-            history += action
-            path.append((infoset, action))
+            action = random.choices(actions, weights=list(probs.values()))[0]
 
-        if self.training_mode:
-            final_state = State(card1, card2, history)
-            self._memorize_rewards(path, final_state)
+            # Get the probability of this action under current policy
+            action_proba = self.policy[infoset].get(action, 0.0)
+            trajectory.perform_action(action, action_proba=action_proba)
+
+        return trajectory
 
     def get_progress_bar(self, epsilon=1e-6):
 
@@ -160,7 +153,7 @@ class CachedCounterfactualAgent(BaseAgent):
             # Iterate over possible initial states
             for card1, card2 in permutations(range(self.deck_size), 2):
                 state = State(card1, card2, branch="")
-                self.sample_trajectory(state)
+                self.sample_trajectory_from_root(state)
 
         # Perform all updates at once
         self.update_visited_infosets()
@@ -193,7 +186,7 @@ class NewUpdateRuleAgent(CachedCounterfactualAgent):
             for _ in range(n_times):
                 for card1, card2 in permutations(range(self.deck_size), 2):
                     state = State(card1, card2, branch="")
-                    self.sample_trajectory(state)
+                    self.sample_trajectory_from_root(state)
 
         # Perform all updates at once
         self.update_visited_infosets()

@@ -14,7 +14,7 @@ from mini_poker.game import MiniPoker, Infoset, to_infoset, State, Trajectory, A
 from mini_poker.utils import clip
 from mini_poker.paths import DATA_DIR
 from mini_poker.training.evaluation import evaluate_agents
-from mini_poker.utils import print_colored_status, COLORS
+from mini_poker.utils import print_colored_status
 
 
 class BaseAgent:
@@ -26,17 +26,30 @@ class BaseAgent:
     - convert logits -> softmax policy
     - sample actions
     """
-    def __init__(self, game: MiniPoker, logit_bound=10.,
-                 epochs=None, n_games_compare=10_000, memory_period=20):
+
+    def __init__(self,
+                 game: MiniPoker,
+                 logit_bound=10.,
+                 explore_proba: float = None,
+                 epochs=None,
+                 memory_period=100):
+        """
+        :param game: game instance
+        :param logit_bound: Maximum logit magnitude (for stability)
+        :param explore_proba: probability of sampling random action during a rollout
+        :param epochs:
+        :param memory_period: Number of updates on the reward table after the first update is almost forgotten.
+        """
         self.game = game
+        self.explore_proba = explore_proba
         self.epochs = epochs
         self.logit_bound = logit_bound
-        self.n_games_compare = n_games_compare
         self.deck_size = game.deck_size
         self.game_tree = game.tree
         self.memory_period = memory_period
-        self.logits = {}
-        self.policy = {}
+        self.eval_epochs = None
+        self.logits = dict()
+        self.policy = dict()
         self.name = None
         self.compare_agent = None
         self.epoch = None
@@ -52,6 +65,8 @@ class BaseAgent:
 
     def _init_name(self):
         self.name = f"{type(self).__name__}({self.game.game_power},{self.game.deck_size})"
+        if self.explore_proba:
+            self.name += f"_p{self.explore_proba * 100:.0f}"
 
     def __str__(self):
         return self.name
@@ -112,6 +127,12 @@ class BaseAgent:
         p = list(probs.values())
         return np.random.choice(actions, p=p)
 
+    def get_average_rewards(self, infoset: Infoset) -> Dict[Action, float]:
+        return self.average_reward[infoset]
+
+    def get_visit_counts(self, infoset: Infoset) -> Dict[Action, int]:
+        return self.reward_counts[infoset]
+
     def softmax_update(self, infoset: Infoset):
         """Convert logits to policy probabilities."""
         raw_logits = self.get_logits(infoset)
@@ -122,22 +143,24 @@ class BaseAgent:
         self.set_policy(infoset, proba)
 
     def rollout(self, state: State):
-        """Returns (p1_reward, p2_reward)"""
-        while state.branch not in self.game.terminals:
-            player = len(state.branch) % 2
-            card = state.card_p1 if player == 0 else state.card_p2
-            infoset = Infoset(card, state.branch)
+        """
+        Perform rollout
+        Returns (p1_reward, p2_reward)
+        """
+        temp_state = state
+        while temp_state.branch not in self.game.terminals:
+            infoset = temp_state.get_current_player_infoset()
             action = self.get_action(infoset)
-            state.branch += action
-        return self.game.get_reward(state)
+            temp_state = temp_state.perform_action(action)
+        return self.game.get_reward(temp_state)
 
     def evaluate_action(self, state: State, action, rollout_samples) -> tuple:
         """Evaluate action by averaging rollout rewards."""
         total_p1 = 0
         total_p2 = 0
         for _ in range(rollout_samples):
-            temp_state = state.copy()
-            temp_state.branch += action
+            temp_state = state
+            temp_state = temp_state.perform_action(action)
             r1, r2 = self.rollout(temp_state)
             total_p1 += r1
             total_p2 += r2
@@ -145,11 +168,17 @@ class BaseAgent:
         value_p2 = total_p2 / rollout_samples
         return value_p1, value_p2
 
-    def sample_trajectory_logic(self, state: State) -> Trajectory:
+    def _do_explore(self):
+        """Randomly generate boolean for exploration."""
+        do_explore = False
+        if self.explore_proba:
+            if random.random() < self.explore_proba:
+                do_explore = True
+        return do_explore
+
+    def sample_trajectory_logic(self, state) -> Trajectory:
         """
-        Sample trajectory by using the policy.
-        Modify this method to change sampling technique.
-        WARNING: 'state' will be modified during the trajectory.
+        Sample trajectory using policy with epsilon-greedy exploration.
         """
         trajectory = Trajectory(state)
         while not self.game.is_terminal(trajectory.state.branch):
@@ -158,24 +187,27 @@ class BaseAgent:
             # Action selection
             probs = self.policy[infoset]
             actions = list(probs.keys())
-            action = random.choices(actions, weights=list(probs.values()))[0]
+
+            # Epsilon-greedy exploration
+            if self._do_explore():
+                action = random.choice(actions)
+            else:
+                action = random.choices(actions, weights=list(probs.values()))[0]
 
             trajectory.perform_action(action, action_proba=probs[action])
 
         return trajectory
 
-    def sample_trajectory(self, state: State) -> Trajectory:
+    def sample_trajectory_from_root(self, state: State) -> Trajectory:
         """
-        Perform and return random trajectory.
+        Perform and return random trajectory starting from root.
+        If training_mode is on, it also memorizes the rewards.
         To change sampling technique, modify 'sample_trajectory_logic'.
         """
-
-        # All trajectories must start at root for proper probability and reward estimation.
         assert state.branch == "", f'Trajectory must start at root state, not "{state.branch}"'
 
         # Sample trajectory
-        temp_state = state.copy()
-        trajectory = self.sample_trajectory_logic(temp_state)
+        trajectory = self.sample_trajectory_logic(state)
 
         # Add rewards to average
         if self.training_mode:
@@ -436,9 +468,10 @@ class BaseAgent:
         print(f"Sanity Check: {saturated_count}/{total_infosets} infosets are fully saturated.")
         return saturated_count
 
-    def set_compare_agent(self, agent):
+    def set_compare_agent(self, agent, eval_epochs=1):
         """Set agent to compare with during training."""
         self.compare_agent = agent
+        self.eval_epochs = eval_epochs
 
     def training(self):
         """Blanket training method"""
@@ -449,7 +482,7 @@ class BaseAgent:
         for self.epoch in range(self.epochs):
             self.training_epoch()
             if self.compare_agent is not None:
-                ev_self, ev_other = evaluate_agents(self.game, self, self.compare_agent, n_games=self.n_games_compare)
+                ev_self, ev_other, n_games = evaluate_agents(self.game, [self, self.compare_agent], epochs=self.eval_epochs)
                 self.ev_list.append(ev_self)
             self.times.append(time())
             print(self.get_progress_bar())
@@ -459,27 +492,29 @@ class BaseAgent:
 
         # Epochs
         if self.epoch is not None:
-            bar += f"{self.epoch+1:3})  {(self.epoch+1) / self.epochs:7.2%}"
+            p = (self.epoch + 1) / self.epochs
+            bar += f"{self.epoch + 1:3})  {p:8.1%}"
         else:
-            bar += f"{0:3})  {0:7.2%}"
+            bar += f"{0:3})  {0:8.1%}"
 
         # EVs
         if self.ev_list is not None and len(self.ev_list):
             n = max(1, len(self.ev_list) // 20)  # upper 5%
             ev = np.mean(self.ev_list[-n:])
-            bar += print_colored_status(ev, text=f"  {ev:+6.2f}", red=COLORS['white'])
+            bar += print_colored_status(ev, text=f"  {ev:+6.2f}", red=None)
         else:
             bar += f"    --- "
 
         # Time
-        n_times = 3
-        if self.times is not None and len(self.times) >= 1 + n_times:
-            time_elapsed = self.times[-1] - self.times[-1-n_times]
+        max_n_times = 5
+        if self.times is not None and len(self.times) > 1:
+            n_times = min(max_n_times, len(self.times) - 1)
+            time_elapsed = self.times[-1] - self.times[-1 - n_times]
             speed = n_times / (time_elapsed + epsilon)
             epochs_left = self.epochs - self.epoch
             time_left = epochs_left / speed
             if time_left > 60:
-                bar += f"   eta: {time_left//60:3.0f} min"
+                bar += f"   eta: {time_left // 60:3.0f} min"
             else:
                 bar += f"   eta: {time_left:3.0f} s  "
         else:
@@ -487,6 +522,10 @@ class BaseAgent:
 
         # Exploration
         bar += f"   expl: {len(self.reward_counts) / len(self.policy):7.2%}"
+
+        # Max Magnitude
+        logit_mag = self.average_logit_magnitude()
+        bar += f"   mag:{logit_mag:5.2f}"
 
         return bar
 
@@ -645,16 +684,105 @@ class BaseAgent:
         finally:
             self.training_mode = original_mode
 
-    def show_average_reward(self) -> str:
-        out = f"{len(self.average_reward)} infosets\n"
+    def show_average_reward(self, length=23) -> str:
+        out = f"\n{len(self.average_reward)} infosets ({len(self.average_reward) / len(self.policy):.2%})\n"
         for infoset, d in self.average_reward.items():
-            out += f"{infoset}\n"
-            for a, v in d.items():
-                if v == 0:
-                    out += f"  {a}  --\n"
+            out += "\n"
+            best_value = max(d.values())
+            actions = self.game.tree[infoset.branch]
+            for i, a in enumerate(actions):
+
+                # Infoset
+                out += " " * length if i else f"{str(infoset):<{length}}"
+
+                # action
+                out += f" {a:<3}"
+
+                # value
+                v = d.get(a, None)
+                if v is not None:
+                    out += f" {v:>+8.2f}"
                 else:
-                    out += f"  {a}  {v:+7.2f}    ({self.reward_counts[infoset][a]})\n"
+                    out += " " * 8 + "-"
+                out += " " + ("*" if v == best_value else " ") + " "
+
+                # visits
+                num = self.reward_counts[infoset][a]
+                if num:
+                    s_num = f"({num})"
+                    out += f" {s_num:<8}"
+                else:
+                    out += "  -" + " " * 6
+
+                # policy
+                p = self.policy[infoset].get(a, None)
+                if p is not None:
+                    out += f" {p:>6.1%}" if p > 1e-3 else " " * 6 + "-"
+                else:
+                    out += " " * 6 + "-"
+
+                out += "\n"
         return out
+
+    def average_logit_magnitude(self) -> float:
+        """
+        Calculates the average absolute logit magnitude across all information sets.
+
+        This metric indicates how "confident" or "polarized" the agent's preferences are:
+        - Low values (~0): logits are near zero, policy is close to uniform
+        - High values (near logit_bound): agent has strong preferences for certain actions
+
+        Returns:
+            float: Average of |logit| across all (infoset, action) pairs
+        """
+        if not self.logits:
+            return 0.0
+
+        tot_magnitude = 0.
+        n = 0
+
+        for infoset, action_logits in self.logits.items():
+            magnitude = 0.
+            for logit in action_logits.values():
+                magnitude += logit ** 2
+            magnitude = magnitude ** 0.5
+            tot_magnitude += magnitude
+            n += 1
+
+        if n == 0:
+            return 0.
+        else:
+            return tot_magnitude / n
+
+    def normalize_logits(self):
+        """
+        For each infoset:
+        1. Center logits (subtract mean so they sum to 0)
+        2. If L2 norm exceeds logit_bound, scale down so norm equals logit_bound
+
+        This ensures logits remain stable while preserving relative preferences.
+        The operation is: logit' = (logit - mean) * min(1, logit_bound / ||centered||_2)
+        """
+        for infoset, action_logits in self.logits.items():
+            actions = list(action_logits.keys())
+
+            # Get current logits as list
+            logits = [action_logits[a] for a in actions]
+
+            # Step 1: Center logits (subtract mean)
+            mean_logit = sum(logits) / len(logits)
+            centered = [l - mean_logit for l in logits]
+
+            # Step 2: Compute L2 norm and scale if necessary
+            l2_norm = math.sqrt(sum(l ** 2 for l in centered))
+
+            if l2_norm > self.logit_bound and l2_norm > 1e-8:  # avoid division by zero
+                scale = self.logit_bound / l2_norm
+                centered = [l * scale for l in centered]
+
+            # Update stored logits (set_logit applies individual clipping as safety net)
+            for i, action in enumerate(actions):
+                self.set_logit(infoset, action, centered[i])
 
     def training_epoch(self):
         pass

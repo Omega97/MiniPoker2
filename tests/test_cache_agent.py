@@ -4,7 +4,7 @@ from mini_poker.agents.cached_counterfactual_agent import CachedCounterfactualAg
 
 def main(game_power=5, deck_size=52):
     game = MiniPoker(game_power, deck_size)
-    agent = CachedCounterfactualAgent(game, epochs=2000, lr=0.01, n_games_compare=1000)
+    agent = CachedCounterfactualAgent(game, epochs=2000, lr=0.01)
     agent.load()
     print(agent.show_average_reward())
 

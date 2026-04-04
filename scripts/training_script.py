@@ -23,14 +23,14 @@ def main(game_power=4, deck_size=52, n_games=20_000):
     # --- CEM 2 ---
     name = 'cem2'
     agents[name] = CounterfactualEMAgent(game, epochs=100, lr=0.01, rollout_samples=1,
-                                         explore_proba=1., max_sigma=1., n_games_compare=n_games)
+                                         explore_proba=1., kernel_size=1.)
     agents[name].set_compare_agent(agent_good)
     trainer = AgentTrainer(agents[name])
     trainer.run()
 
     # --- CRM ---
     name = 'crm'
-    agents[name] = CRMAgent(game, epochs=300, explore_proba=0.1, n_games_compare=n_games)
+    agents[name] = CRMAgent(game, epochs=300, explore_proba=0.1)
     agents[name].set_compare_agent(agent_good)
     trainer = AgentTrainer(agents[name])
     trainer.run()

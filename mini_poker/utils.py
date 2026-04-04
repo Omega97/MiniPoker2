@@ -1,6 +1,5 @@
 import numpy as np
 
-
 # ANSI escape code sequences
 COLORS = {"red": "\033[91m",
           "green": "\033[92m",
@@ -12,7 +11,7 @@ def clip(x, low, high):
     return max(low, min(high, x))
 
 
-def print_colored_status(value: float, text: str=None,
+def print_colored_status(value: float, text: str = None,
                          green=COLORS["green"], red=COLORS["red"]):
     """
     Prints text in color based on the sign of value.
@@ -23,10 +22,15 @@ def print_colored_status(value: float, text: str=None,
     elif value > 0:
         color = green
     else:
-        color = COLORS['white']
+        color = None
+
     if text is None:
         text = str(value)
-    return f"{color}{text}{COLORS['reset']}"
+
+    if color is None:
+        return text
+    else:
+        return f"{color}{text}{COLORS['reset']}"
 
 
 def card_to_num(rank: str, suit: str) -> int:
