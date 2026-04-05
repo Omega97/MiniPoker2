@@ -1,10 +1,78 @@
 import numpy as np
 
+
 # ANSI escape code sequences
-COLORS = {"red": "\033[91m",
-          "green": "\033[92m",
-          "white": "\033[97m",
-          "reset": "\033[0m"}
+COLORS = {
+    # Foreground Colors (Standard)
+    "red": "\033[91m",
+    "green": "\033[92m",
+    "yellow": "\033[93m",
+    "blue": "\033[94m",
+    "magenta": "\033[95m",
+    "cyan": "\033[96m",
+    "white": "\033[97m",
+    "black": "\033[30m",
+
+    # Foreground Colors (Bright/Bold)
+    "bright_red": "\033[91;1m",
+    "bright_green": "\033[92;1m",
+    "bright_yellow": "\033[93;1m",
+    "bright_blue": "\033[94;1m",
+    "bright_magenta": "\033[95;1m",
+    "bright_cyan": "\033[96;1m",
+    "bright_white": "\033[97;1m",
+
+    # Foreground Colors (Dark/Dim)
+    "dark_red": "\033[31m",
+    "dark_green": "\033[32m",
+    "dark_yellow": "\033[33m",
+    "dark_blue": "\033[34m",
+    "dark_magenta": "\033[35m",
+    "dark_cyan": "\033[36m",
+    "dark_white": "\033[37m",
+
+    # Background Colors
+    "bg_red": "\033[41m",
+    "bg_green": "\033[42m",
+    "bg_yellow": "\033[43m",
+    "bg_blue": "\033[44m",
+    "bg_magenta": "\033[45m",
+    "bg_cyan": "\033[46m",
+    "bg_white": "\033[47m",
+    "bg_black": "\033[40m",
+
+    # Background Colors (Bright)
+    "bg_bright_red": "\033[101m",
+    "bg_bright_green": "\033[102m",
+    "bg_bright_yellow": "\033[103m",
+    "bg_bright_blue": "\033[104m",
+    "bg_bright_magenta": "\033[105m",
+    "bg_bright_cyan": "\033[106m",
+    "bg_bright_white": "\033[107m",
+
+    # Text Styles
+    "bold": "\033[1m",
+    "dim": "\033[2m",
+    "italic": "\033[3m",
+    "underline": "\033[4m",
+    "blink": "\033[5m",
+    "reverse": "\033[7m",
+    "hidden": "\033[8m",
+    "strikethrough": "\033[9m",
+
+    # Reset Codes
+    "reset": "\033[0m",
+    "reset_color": "\033[39m",
+    "reset_bg": "\033[49m",
+    "reset_style": "\033[22m",
+}
+
+# Convenience aliases
+COLORS["orange"] = COLORS["yellow"]  # Terminal doesn't have true orange
+COLORS["purple"] = COLORS["magenta"]
+COLORS["grey"] = COLORS["dark_white"]
+COLORS["gray"] = COLORS["dark_white"]
+COLORS["normal"] = COLORS["reset"]
 
 
 def clip(x, low, high):
@@ -64,11 +132,11 @@ def card_to_num(rank: str, suit: str) -> int:
 def num_to_card(num: int):
     """Reverses the process: converts an index back to (rank, suit)."""
     ranks = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A']
-    suits = ['s', 'h', 'd', 'c']
+    suits = ['♠️', '♣️', '♦️', '♥️']
 
     rank = ranks[num // 4]
     suit = suits[num % 4]
-    return rank, suit
+    return rank + suit
 
 
 def clip_proba(a, threshold: float = 1e-3) -> np.ndarray:

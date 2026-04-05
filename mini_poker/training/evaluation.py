@@ -107,8 +107,7 @@ def all_v_all_tournament(game: MiniPoker, agents: List['BaseAgent'], epochs=1, r
 def quick_evaluate_agents(game: MiniPoker, agents: List['BaseAgent'], n_games=10_000):
     """
     Evaluates two agents by sampling random hands and alternating positions
-    every game to eliminate positional bias. Much faster than exhaustive
-    evaluation for large deck sizes.
+    every game to eliminate positional bias.
 
     Returns the net average reward for (Agent A, Agent B).
     """
@@ -117,7 +116,6 @@ def quick_evaluate_agents(game: MiniPoker, agents: List['BaseAgent'], n_games=10
     for game_idx in range(n_games):
         # Sample two distinct cards uniformly at random
         p1_card, p2_card = random.sample(range(game.deck_size), 2)
-        history = ""
 
         # Alternate positions every game: even=A@P1, odd=B@P1
         if game_idx % 2 == 0:
@@ -125,9 +123,10 @@ def quick_evaluate_agents(game: MiniPoker, agents: List['BaseAgent'], n_games=10
             card_p1, card_p2 = p1_card, p2_card
         else:
             agent_p1, agent_p2 = reversed(agents)
-            card_p1, card_p2 = p2_card, p1_card  # Swap cards too!
+            card_p1, card_p2 = p2_card, p1_card  # Swap cards
 
         # Play until terminal
+        history = ""
         while history not in game.terminals:
             acting_player_idx = len(history) % 2
             current_agent = agent_p1 if acting_player_idx == 0 else agent_p2
@@ -137,17 +136,16 @@ def quick_evaluate_agents(game: MiniPoker, agents: List['BaseAgent'], n_games=10
             action = current_agent.get_action(infoset)
             history += action
 
-        # Accumulate rewards for each agent (not position!)
-        state = State(p1_card, p2_card, branch=history)  # Original card assignment
+        # Use the cards that were actually used in play
+        state = State(card_p1, card_p2, branch=history)
         r1, r2 = game.get_reward(state)
 
+        # Attribute rewards to agents (not positions)
         if game_idx % 2 == 0:
-            # A was P1, B was P2
-            total_a += r1
-            total_b += r2
+            total_a += r1  # A was P1
+            total_b += r2  # B was P2
         else:
-            # B was P1, A was P2
-            total_b += r1
-            total_a += r2
+            total_b += r1  # B was P1
+            total_a += r2  # A was P2
 
-    return total_a / n_games, total_b / n_games
+        yield total_a / (game_idx + 1), total_b / (game_idx + 1), game_idx + 1

@@ -524,8 +524,8 @@ class BaseAgent:
         bar += f"   expl: {len(self.reward_counts) / len(self.policy):7.2%}"
 
         # Max Magnitude
-        logit_mag = self.average_logit_magnitude()
-        bar += f"   mag:{logit_mag:5.2f}"
+        # logit_mag = self.average_logit_magnitude()
+        # bar += f"   mag:{logit_mag:5.2f}"
 
         return bar
 

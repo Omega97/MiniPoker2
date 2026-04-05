@@ -23,6 +23,7 @@ class CRMAgent(BaseAgent):
                  epochs=1_000,
                  explore_proba=0.1,
                  memory_period=100,
+                 warm_up_games=100_000,
                  ):
         """
         :param game: Game instance
@@ -31,6 +32,7 @@ class CRMAgent(BaseAgent):
         :param explore_proba: random move proba during training
         """
         self.epochs = epochs
+        self.warm_up_games = warm_up_games
         self.cumulative_regrets = {}
         self.cumulative_policy = {}
         self.iteration_count = 0
@@ -42,11 +44,62 @@ class CRMAgent(BaseAgent):
         self.name += f"_e{self.epochs}"
         self.name += f"_p{self.explore_proba * 100:.0f}"
 
+    def run_warm_up(self):
+        """
+        Plays a large number of purely random games to initialize
+        reward statistics and visit counts.
+        """
+        print(f"--- Starting Warm-up Phase ({self.warm_up_games} games) ---")
+
+        # Use train_context to ensure trajectories are handled correctly
+        with self.train_context():
+            for _ in range(self.warm_up_games):
+                # Sample 2 random cards from the deck
+                cards = random.sample(range(self.game.deck_size), 2)
+                state = State(cards[0], cards[1], branch="")
+
+                # Sample a trajectory using current (initial uniform) policy
+                # Since explore_proba is usually > 0, this will be mostly random
+                trajectory = self.sample_trajectory_logic(state)
+
+                # Update regrets based on these random outcomes
+                self.update_regrets(trajectory)
+
+        # Reset iteration count so the 'real' training starts at epoch 0
+        self.iteration_count = 0
+        print("--- Warm-up Complete ---")
+
+    def regret_completeness_index(self):
+        """
+        Calculates the percentage of available actions in the game tree
+        that have been visited/updated at least once.
+
+        Returns:
+            float: A value between 0.0 and 1.0.
+        """
+        total_actions = 0
+        visited_actions = 0
+
+        # Iterate through all initialized infosets in the cumulative policy
+        for infoset, actions in self.cumulative_policy.items():
+            for action, weight in actions.items():
+                total_actions += 1
+                # If the cumulative weight is > 0, the CFR update_regrets
+                # has touched this specific action at least once.
+                if weight > 0:
+                    visited_actions += 1
+
+        if total_actions == 0:
+            return 0.0
+
+        return visited_actions / total_actions
+
     def get_progress_bar(self, epsilon=1e-6):
         bar = super().get_progress_bar()
+        bar += f"   F = {self.best_card_fold_index():.3f}"
+        bar += f"   r ={self.regret_completeness_index():7.2%}"
         bar += f"   S = {self.entropy():.4f}"
         bar += f"   St = {self.terminal_entropy():.4f}"
-        bar += f"   F = {self.best_card_fold_index():.4f}"
         return bar
 
     def save(self, filepath: str):
@@ -223,7 +276,7 @@ class CRMAgent(BaseAgent):
         # Weight recent policies more heavily for faster convergence
         """
         # return 1  # Constant
-        return self.iteration_count  # Linear weighting (CFR+)
+        return self.iteration_count + 1  # Linear weighting (CFR+)
 
     def update_regrets(self, trajectory: Trajectory):
         """
@@ -298,6 +351,11 @@ class CRMAgent(BaseAgent):
 
         Iterate through all card combinations and update regrets.
         """
+
+        # Perform warm-up immediately after initialization
+        if self.epoch == 0:
+            if self.warm_up_games > 0:
+                self.run_warm_up()
 
         # Sample trajectories and update regrets
         for card1, card2 in self.game.iter_uniformly_over_hands():

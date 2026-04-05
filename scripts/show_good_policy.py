@@ -7,6 +7,11 @@ def show_good_policy(agent):
     agent.sanity_check()
 
 
-if __name__ == '__main__':
+def main():
     agent = load_good_agent(5, 52)
-    show_good_policy(agent)
+    # show_good_policy(agent)
+    print(agent.show_average_reward())
+
+
+if __name__ == '__main__':
+    main()

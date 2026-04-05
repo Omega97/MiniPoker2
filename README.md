@@ -12,7 +12,7 @@ The core engine is powered by a **CFR (Counterfactual Regret Minimization)** alg
 
 ### 🔍 Real-Time Hand Posteriors
 Ever wonder what the bot is thinking? You can query the bot to see its **Posterior Distribution** over your possible hands. By analyzing the history of the game ($h$) and its own policy, the bot calculates the probability of you holding every card in the deck.
-* **Feature:** Use `ask_the_policy` in `main.py` to see the bot’s internal belief state.
+* **Feature:** Use `ask_the_policy` in `main.py` (or `scripts\ask_the_policy.py`) to see the bot’s internal belief state.
 
 ### 🕹️ Human vs. AI Interface
 Ready to test your skills? The `PlayVsAI` module allows you to go head-to-head with the bot in the console. 

@@ -17,23 +17,6 @@ def main(game_power=5, deck_size=52):
     agents = dict()
     agents['base'] = BaseAgent(game)
 
-    # --- EM ---
-    name = 'EM_1'
-    agents[name] = CounterfactualEMAgent(game, epochs=300, lr=0.005, rollout_samples=1, explore_proba=1., kernel_size=2)
-    AgentTrainer(agents[name]).run()
-
-    name = 'EM_10'
-    agents[name] = CounterfactualEMAgent(game, epochs=300, lr=0.005, rollout_samples=10, explore_proba=1., kernel_size=2)
-    AgentTrainer(agents[name]).run()
-
-    name = 'EM_500'
-    agents[name] = CounterfactualEMAgent(game, epochs=500, lr=0.003, rollout_samples=3, explore_proba=1., kernel_size=2)
-    AgentTrainer(agents[name]).run()
-
-    name = 'EM_500_2'
-    agents[name] = CounterfactualEMAgent(game, epochs=500, lr=0.003, rollout_samples=3, explore_proba=1., kernel_size=0)
-    AgentTrainer(agents[name]).run()
-
     # --- CRM ---
     name = 'crm_1k'
     agents[name] = CRMAgent(game, epochs=1000, explore_proba=0.1)
@@ -49,6 +32,23 @@ def main(game_power=5, deck_size=52):
 
     name = 'crm_20k'
     agents[name] = CRMAgent(game, epochs=20_000, explore_proba=0.01)
+    AgentTrainer(agents[name]).run()
+
+    # --- CFR ---
+    name = 'cfr_1k'
+    agents[name] = CFRAgent(game, epochs=1000)
+    AgentTrainer(agents[name]).run()
+
+    name = 'cfr_1500'
+    agents[name] = CFRAgent(game, epochs=1500)
+    AgentTrainer(agents[name]).run()
+
+    name = 'cfr_2k'
+    agents[name] = CFRAgent(game, epochs=2000)
+    AgentTrainer(agents[name]).run()
+
+    name = 'cfr_3k'
+    agents[name] = CFRAgent(game, epochs=3000)
     AgentTrainer(agents[name]).run()
 
     # --- Evaluation ---
