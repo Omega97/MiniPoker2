@@ -5,7 +5,7 @@ from mini_poker.agents.base_agent import BaseAgent, Infoset
 
 
 def ask_the_policy(my_hand: str | int, branch: str, agent: BaseAgent,
-                   length=30, p_threshold=1/500):
+                   length=30, p_threshold=1 / 500):
     """
     Ask the policy what to do, with Bayesian EV estimation.
     If 'online_search' is available, then search is performed, else, we use 'get_policy'.
@@ -24,10 +24,22 @@ def ask_the_policy(my_hand: str | int, branch: str, agent: BaseAgent,
     # Compute action probabilities and posterior over opponent's card
     probs, post = agent.analyze_infoset_and_posterior(infoset, exclude_self_card=True)
 
-    # Display opponent hand likelihood (relative scale)
-    max_p = max(post) if np.any(post) else 1.0
-    print(f"\nOpponent Hand Likelihood (Relative scale, max={max_p:.1%}):")
-    for card, p in enumerate(post):
+    # Display top 10 opponent hand likelihoods
+    # Create list of (card_index, probability) pairs
+    card_probs = [(card, p) for card, p in enumerate(post)]
+
+    # Sort by probability in descending order
+    card_probs.sort(key=lambda x: x[1], reverse=True)
+
+    # Take top 10
+    top_10 = card_probs[:10]
+
+    # Calculate max probability among top 10 for scaling the bar chart
+    max_p = top_10[0][1] if top_10 else 1.0
+
+    print(f"\nTop 10 Opponent Hands (Relative scale):\n")
+
+    for card, p in top_10:
         bar_len = int((p / max_p) * length) if max_p > 0 else 0
         bar = '=' * bar_len
         bar = COLORS["bright_blue"] + bar + COLORS["reset"]
@@ -51,21 +63,23 @@ def ask_the_policy(my_hand: str | int, branch: str, agent: BaseAgent,
     print()
     for action in actions:
         prob = proba_list[action]
-        ev = agent.get_average_rewards(infoset)[action]
+        ev = agent.get_average_rewards(infoset, action)
         s_ev = print_colored_status(ev, text=f"{ev:+.2f}")
         print(f"  {action}: {prob:7.1%}     EV = {s_ev}")
 
-    print(f'\n({num_to_card(my_hand_int)}, "{branch}")  →  RANDOM ACTION:  "{recommended_action}"')
+    msg = f'\n  ({num_to_card(my_hand_int)}, "{branch}")'
+    msg += '  →  RANDOM ACTION: '
+    msg += f'{COLORS["yellow"]}"{recommended_action}"{COLORS["reset"]}\n'
+    print(msg)
 
 
 def main(game_power=5, deck_size=52):
-
     # --- Load agent ---
     ai_agent = load_good_agent(game_power, deck_size)
 
     # --- Spot ---
     my_hand = 40  # <- hand  ("Th", 35, ...)
-    branch = "RRR"  # <- branch  ("", "C", "RD", "TA", "Q", ...)
+    branch = "R"  # <- branch  ("", "C", "RD", "TA", "Q", ...)
 
     # --- Ask agent ---
     ask_the_policy(my_hand=my_hand, branch=branch, agent=ai_agent)

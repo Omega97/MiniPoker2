@@ -1,27 +1,34 @@
 import time
 import numpy as np
-import random
 from mini_poker.game import MiniPoker, Infoset, ACTIONS
-from mini_poker.training.evaluation import quick_evaluate_agents
+from mini_poker.training.evaluation import random_games_evaluate_agents
 from mini_poker.utils import print_colored_status, num_to_card
+from mini_poker.agents.crm_agent import CRMAgent
 from mini_poker.agents.cfr_agent import CFRAgent
 
 
-def test_search(n_search_iter=2000, n_eval_games=10_000):
+def test_1_eval_search(n_eval_games=20_000, jump_factor=1.1):
     game = MiniPoker(5, 52)
 
     # Load same checkpoint for both agents
-    agent_1 = CFRAgent(game, epochs=2000, search_enabled=False)
-    agent_1.load()
 
-    agent_2 = CFRAgent(game, epochs=2000, search_enabled=False)
+    # agent_1 = CFRAgent(game, epochs=1000, n_moves_no_search=2)  # +0.18
+    # agent_1.load()
+    # agent_1.set_search_enabled(True, iterations=1000)
+
+    # agent_1 = CFRAgent(game, epochs=1000, n_moves_no_search=2)  # +0.04
+    # agent_1.load()
+    # agent_1.set_search_enabled(True, iterations=100)
+
+    agent_1 = CFRAgent(game, epochs=1000, n_moves_no_search=1)  # + 0.30
+    agent_1.load()
+    agent_1.set_search_enabled(True, iterations=1000)
+
+    agent_2 = CFRAgent(game, epochs=1000)  # +0.00
     agent_2.load()
 
-    # Enable search ONLY for agent_1 (start with 100 iterations for testing)
-    agent_1.set_search_enabled(True, iterations=n_search_iter)
-
-    print(f"Agent 1: {agent_1.name} (WITH SEARCH)")
-    print(f"Agent 2: {agent_2.name} (WITHOUT SEARCH)")
+    print(f"Agent 1: {agent_1.name}")
+    print(f"Agent 2: {agent_2.name}")
     print("-" * 60)
 
     start_time = time.time()
@@ -30,69 +37,45 @@ def test_search(n_search_iter=2000, n_eval_games=10_000):
     results = []
 
     # Start with 10,000 games for quick testing, scale to 100k if signal is clear
-    for r1, r2, n in quick_evaluate_agents(game, [agent_1, agent_2], n_games=n_eval_games):
-        if n >= period:
+    for r1, r2, n in random_games_evaluate_agents(game, [agent_1, agent_2], n_games=n_eval_games):
+        if n >= period or n == n_eval_games-1:
             elapsed = time.time() - start_time
-            games_per_sec = n / elapsed
-            str_r1 = print_colored_status(r1, f"{r1:+.2f}")
-            print(f"{n:>6}) {str_r1} {r2:+.2f}  ({games_per_sec:.1f} games/s)")
+            if elapsed > 0:
+                games_per_sec = n / elapsed
+                str_r1 = print_colored_status(r1, f"{r1:+.2f}")
+                print(f"{n+1:>6}) {str_r1} {r2:+.2f}  ({games_per_sec:.1f} games/s)")
             results.append((r1, r2, n))
-            period = int(period * 1.2) + 1
+            period = int(period * jump_factor) + 1
 
     final_r1, final_r2, _ = results[-1]
     elapsed = time.time() - start_time
 
     print("-" * 60)
     print(f"FINAL: Search EV = {final_r1:+.3f}, Baseline EV = {final_r2:+.3f}")
-    print(f"Search Advantage: {final_r1:+.3f}")
     print(f"Total Time: {elapsed / 60:.2f} min")
 
     return results
 
 
-def test_search_multiple_seeds():
-    """Run multiple seeds for statistical significance."""
-    advantages = []
-
-    for seed in range(5):
-        print(f"\n=== Seed {seed} ===")
-        np.random.seed(seed)
-        random.seed(seed)
-
-        results = test_search()
-        final_r1, final_r2, _ = results[-1]
-        advantages.append(final_r1 - final_r2)
-
-    print("\n" + "=" * 60)
-    print(f"MEAN Advantage: {np.mean(advantages):+.3f} ± {np.std(advantages):.3f}")
-    print(f"Min: {min(advantages):+.3f}, Max: {max(advantages):+.3f}")
-
-    return advantages
-
-
-def test_3_policy_change_with_search():
+def test_2_policy_change_with_search(card=48, branch="RRRR", n_iterations=100):
     """
     Show the difference in policy before and after online CFR search
     for an obscure infoset that likely has sparse training data.
+
+    Pick an obscure infoset: high card + aggressive history
     """
+    infoset = Infoset(card, branch)
     game = MiniPoker(5, 52)
 
     # Load trained agent
-    agent = CFRAgent(game, epochs=2000, search_enabled=False)
+    agent = CFRAgent(game, epochs=1000, search_enabled=False)
     agent.load()
-
-    # Pick an obscure infoset: high card + aggressive history
-    # Card 48 is near the top of a 52-card deck
-    # "RRR" means three raises occurred - rare situation
-    test_card = 48
-    test_history = "RRRR"
-    infoset = Infoset(test_card, test_history)
 
     print("=" * 70)
     print(f"POLICY CHANGE ANALYSIS: Infoset{infoset}")
     print("=" * 70)
-    print(f"Card: {test_card} / {game.deck_size - 1} (top {100 * (test_card / game.deck_size):.0f}%)")
-    print(f"History: '{test_history}' ({len(test_history)} actions - rare situation)")
+    print(f"Card: {card} / {game.deck_size - 1} (top {100 * (card / game.deck_size):.0f}%)")
+    print(f"History: '{branch}' ({len(branch)} actions - rare situation)")
     print()
 
     # Check if this infoset exists in training
@@ -133,8 +116,8 @@ def test_3_policy_change_with_search():
     print()
 
     # 3. Enable search and get policy AFTER search
-    agent.set_search_enabled(True, iterations=500)
-    policy_after = agent.online_search(infoset, n_iterations=500)
+    agent.set_search_enabled(True, iterations=n_iterations)
+    policy_after = agent.online_search(infoset, n_iterations=n_iterations)
     agent.set_search_enabled(False)  # Disable again
 
     print("🔍 POLICY AFTER SEARCH (500 Online CFR Iterations):")
@@ -170,8 +153,6 @@ def test_3_policy_change_with_search():
 
     print(f"  Total Policy Change (L1 norm):     {total_change:.3f}")
     print(f"  Max Change (action '{max_change_action}'):       {max_change:.1%}")
-    # print(f"  Policy Entropy Before:             {agent._calc_entropy(policy_before):.4f}")
-    # print(f"  Policy Entropy After:              {agent._calc_entropy(policy_after):.4f}")
     print()
 
     # 5. Interpretation
@@ -190,11 +171,12 @@ def test_3_policy_change_with_search():
         print("  ⚠️  This infoset had sparse training data - search is compensating.")
     print()
     print("=" * 70)
+    print('\n')
 
     return policy_before, policy_after, total_change
 
 
-def test_policy_change(card, branch, n_iterations=500):
+def test_3_policy_change(card, branch, n_iterations=500):
     """
     Display action frequencies before and after online CFR search,
     then sample and print a random action based on the refined policy.
@@ -204,7 +186,6 @@ def test_policy_change(card, branch, n_iterations=500):
     :param n_iterations: Search iterations
     """
     game = MiniPoker(5, 52)
-    # Note: Using CRMAgent as per your provided file content
     agent = CFRAgent(game, epochs=2000)
     agent.load()
 
@@ -249,6 +230,6 @@ def test_policy_change(card, branch, n_iterations=500):
 
 
 if __name__ == '__main__':
-    # test_search()
-    # test_3_policy_change_with_search()
-    test_policy_change(card=40, branch="RRRR", n_iterations=1_000)
+    test_1_eval_search()
+    # test_2_policy_change_with_search(card=40, branch="RRR", n_iterations=200)
+    # test_3_policy_change(card=40, branch="RRR", n_iterations=1)

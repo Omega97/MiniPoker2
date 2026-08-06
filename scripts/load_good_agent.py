@@ -63,7 +63,7 @@ def load_greedy_agent(n_visits=10, k_greed=5.):
     return greedy_agent
 
 
-def load_good_search_cfr_agent(n_visits=1000):
+def load_good_search_cfr_agent(n_visits=2000):
     """
     Load a CFR agent with online search enabled.
 

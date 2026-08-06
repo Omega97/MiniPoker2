@@ -5,6 +5,7 @@ from typing import List
 from mini_poker.utils import print_colored_status
 from mini_poker.game import MiniPoker, Infoset, State
 
+
 # Only import for type checking, not at runtime
 if TYPE_CHECKING:
     from mini_poker.agents.base_agent import BaseAgent
@@ -104,7 +105,7 @@ def all_v_all_tournament(game: MiniPoker, agents: List['BaseAgent'], epochs=1, r
         epochs += 1
 
 
-def quick_evaluate_agents(game: MiniPoker, agents: List['BaseAgent'], n_games=10_000):
+def random_games_evaluate_agents(game: MiniPoker, agents: List['BaseAgent'], n_games=10_000):
     """
     Evaluates two agents by sampling random hands and alternating positions
     every game to eliminate positional bias.

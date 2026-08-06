@@ -1,20 +1,24 @@
 # game.py
+from typing import List, Tuple, TypeAlias
 from itertools import permutations
 from dataclasses import dataclass, replace, field
-from typing import List, Tuple, TypeAlias
+import random
 import ast
+import math
 
 
 # ===== Game Constants =====
-LABELS = {2: 'R', 4: 'D', 8: 'T', 16: 'Q', 32: '5', 64: '6', 128: '7'}
+_MOVES = 'RDTQ567'  # Raise, Double, Triple, ...
+LABELS = {2**(i+1): move for i, move in enumerate(_MOVES)}
 INV_LABELS = {name: n for n, name in LABELS.items()}
 ACTIONS = tuple(["F", "C"] + list(INV_LABELS) + ["A"])
+del _MOVES
 
 
 # ===== Helper dataclasses =====
 
 
-# Define your alias
+# Action alias
 Action: TypeAlias = str
 
 
@@ -139,6 +143,181 @@ class Trajectory:
             branch = self.state.branch[:i]
             yield State(cards[0], cards[1], branch)
 
+
+class Visits(dict):
+    """
+    A mapping of Action -> Visit Count for a specific Infoset.
+    Behaves like a defaultdict(int).
+    """
+    def __init__(self, mapping=None, **kwargs):
+        super().__init__(mapping or {}, **kwargs)
+        # Ensure all values are integers
+        for k, v in list(self.items()):
+            self[k] = int(v)
+
+    def __missing__(self, key):
+        """Return 0 if key is not found, mimicking defaultdict(int)."""
+        return 0
+
+    def update_count(self, action: 'Action', increment: int = 1):
+        """
+        Increments the visit count for a specific action.
+        """
+        # No need to check existence, __getitem__ will return 0 if missing
+        # However, since we are setting, we just add to current
+        current = self.get(action, 0)
+        self[action] = current + increment
+
+    def get_count(self, action: 'Action') -> int:
+        """
+        Returns the visit count for an action, defaulting to 0 if not present.
+        """
+        return self.get(action, 0)
+
+    def total_visits(self) -> int:
+        """
+        Returns the sum of all visit counts.
+        """
+        return sum(self.values())
+
+    def __repr__(self):
+        sorted_items = sorted(self.items(), key=lambda x: list(self.keys()).index(x[0]))
+        items_str = ", ".join(f"'{k}': {v}" for k, v in sorted_items)
+        return f"Visits({{{items_str}}})"
+
+
+class Rewards(dict):
+    """
+    A mapping of Action -> Cumulative Reward for a specific Infoset.
+    Behaves like a defaultdict(float).
+    """
+    def __init__(self, mapping=None, **kwargs):
+        super().__init__(mapping or {}, **kwargs)
+        # Ensure all values are floats
+        for k, v in list(self.items()):
+            self[k] = float(v)
+
+    def __missing__(self, key):
+        """Return 0.0 if key is not found, mimicking defaultdict(float)."""
+        return 0.0
+
+    def update_reward(self, action: 'Action', reward: float):
+        """
+        Adds a reward value to the cumulative total for a specific action.
+        """
+        current = self.get(action, 0.0)
+        self[action] = current + reward
+
+    def get_cumulative_reward(self, action: 'Action') -> float:
+        """
+        Returns the cumulative reward for an action, defaulting to 0.0 if not present.
+        """
+        return self.get(action, 0.0)
+
+    def get_average_reward(self, action: 'Action', visits: Visits) -> float:
+        """
+        Calculates the average reward for an action given its visit counts.
+        Returns 0.0 if visits are 0 to avoid division by zero.
+        """
+        count = visits.get_count(action)
+        if count == 0:
+            return 0.0
+        return self.get_cumulative_reward(action) / count
+
+    def __repr__(self):
+        sorted_items = sorted(self.items(), key=lambda x: list(self.keys()).index(x[0]))
+        items_str = ", ".join(f"'{k}': {v:.4f}" for k, v in sorted_items)
+        return f"Rewards({{{items_str}}})"
+
+
+class Logits(Rewards):
+    """
+    A mapping of action -> logit for a specific Infoset.
+    Inherits default float behavior from Rewards.
+    """
+    def softmax(self, temperature=1.0) -> 'Policy':
+        """
+        Converts logits to a Policy using the softmax function.
+
+        Args:
+            temperature: Scaling factor. <1 makes distribution sharper, >1 makes it flatter.
+        """
+        if not self:
+            return Policy()
+
+        # Apply temperature scaling
+        scaled_values = {k: v / temperature for k, v in self.items()}
+
+        # Subtract max for numerical stability (prevents overflow in exp)
+        max_val = max(scaled_values.values())
+        exp_values = {k: math.exp(v - max_val) for k, v in scaled_values.items()}
+
+        total = sum(exp_values.values())
+
+        # Assuming Policy is defined elsewhere
+        policy = Policy()
+        for k, v in exp_values.items():
+            policy[k] = v / total
+
+        return policy
+
+
+class Policy(Logits):
+    """
+    A mapping of action -> probability for a specific Infoset.
+    Inherits from dict to allow standard dictionary operations.
+    """
+
+    def normalize(self, epsilon=1e-10) -> 'Policy':
+        """
+        Returns a new Policy where probabilities sum to 1.0.
+        Handles zero-sum cases by distributing uniform probability.
+        """
+        total = sum(self.values())
+
+        if total <= epsilon:
+            n_actions = len(self)
+            if n_actions == 0:
+                return Policy()
+            uniform_val = 1.0 / n_actions
+            # Pass as keyword argument or use update logic to be safe
+            new_policy = Policy()
+            for k in self.keys():
+                new_policy[k] = uniform_val
+            return new_policy
+
+        new_policy = Policy()
+        for k, v in self.items():
+            new_policy[k] = v / total
+
+        return new_policy
+
+    def get_action(self, action: Action) -> float:
+        """Safe access returning 0.0 if action not present."""
+        return self.get(action, 0.0)
+
+    def __repr__(self):
+        sorted_items = sorted(self.items(), key=lambda x: ACTIONS.index(x[0]) if x[0] in ACTIONS else 0)
+        items_str = ", ".join(f"'{k}': {v:.4f}" for k, v in sorted_items)
+        return f"Policy({{{items_str}}})"
+
+    def sample_action(self) -> Action:
+        """
+        Samples an action based on the policy probabilities using weighted random choice.
+        """
+        if not self:
+            raise ValueError("Cannot sample from an empty Policy")
+
+        # random.choices returns a list, so we take the first element [0]
+        actions = list(self.keys())
+        proba = list(self.values())
+        return random.choices(population=actions, weights=proba, k=1)[0]
+
+    def copy(self) -> 'Policy':
+        """
+        Returns a shallow copy of the Policy.
+        """
+        return Policy(self)
 
 # ===== Game class =====
 
